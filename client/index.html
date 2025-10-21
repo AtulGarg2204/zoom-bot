@@ -3,6 +3,7 @@
 <head>
     <title>AI Voice Assistant</title>
     <link rel="stylesheet" href="styles.css">
+    <script src="https://js.pusher.com/8.2.0/pusher.min.js"></script>
 </head>
 <body>
     <div class="container">
@@ -16,79 +17,81 @@
     </div>
 
     <script type="module">
-        // Get WebSocket URL from query parameters
+        // Get server URL from query parameters
         const params = new URLSearchParams(window.location.search);
-        const RELAY_SERVER_URL = params.get('wss');
+        const SERVER_URL = params.get('server') || 'https://zoom-bot-zkf2.vercel.app';
+        const PUSHER_KEY = params.get('pusher_key') || '53efc497795d6002deb2';
+        const PUSHER_CLUSTER = params.get('pusher_cluster') || 'ap2';
         
         const statusDot = document.getElementById('statusDot');
         const statusLabel = document.getElementById('statusLabel');
         const statusUrl = document.getElementById('statusUrl');
 
-        // Update status display
+        const sessionId = 'session-' + Math.random().toString(36).substr(2, 9);
+
         function updateStatus(status, message) {
             statusDot.className = 'status-dot ' + status;
             statusLabel.textContent = message;
-            statusUrl.textContent = RELAY_SERVER_URL || 'No server URL provided';
-        }
-
-        if (!RELAY_SERVER_URL) {
-            updateStatus('disconnected', 'Error: Missing wss parameter');
-        } else {
-            connectToServer();
+            statusUrl.textContent = SERVER_URL;
         }
 
         async function connectToServer() {
             try {
-                updateStatus('connecting', 'Connecting to server...');
+                updateStatus('connecting', 'Connecting to AI...');
                 
-                // Connect to relay server
-                const ws = new WebSocket(RELAY_SERVER_URL);
+                // Initialize Pusher
+                const pusher = new Pusher(PUSHER_KEY, {
+                    cluster: PUSHER_CLUSTER
+                });
                 
-                ws.onopen = async () => {
-                    console.log('Connected to relay server');
-                    updateStatus('connected', 'Connected to AI');
-                    
-                    // Get microphone access
-                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                    const audioContext = new AudioContext({ sampleRate: 24000 });
-                    const source = audioContext.createMediaStreamSource(stream);
-                    
-                    // Create audio processor
-                    await audioContext.audioWorklet.addModule(createAudioProcessor());
-                    const processor = new AudioWorkletNode(audioContext, 'audio-processor');
-                    
-                    // Connect audio pipeline
-                    source.connect(processor);
-                    
-                    // Send audio to server
-                    processor.port.onmessage = (event) => {
-                        if (ws.readyState === WebSocket.OPEN) {
-                            ws.send(JSON.stringify({
-                                type: 'input_audio_buffer.append',
-                                audio: Array.from(event.data)
-                            }));
-                        }
-                    };
-                    
-                    // Receive audio from server
-                    ws.onmessage = async (event) => {
-                        const message = JSON.parse(event.data);
-                        
-                        if (message.type === 'response.audio.delta' && message.delta) {
-                            // Play audio response
-                            playAudio(message.delta);
-                        }
-                    };
-                };
+                // Subscribe to session channel
+                const channel = pusher.subscribe(`session-${sessionId}`);
                 
-                ws.onerror = (error) => {
-                    console.error('WebSocket error:', error);
-                    updateStatus('disconnected', 'Connection error');
-                };
+                // Listen for OpenAI messages
+                channel.bind('openai-message', (message) => {
+                    console.log('Received from OpenAI:', message.type);
+                    
+                    if (message.type === 'response.audio.delta' && message.delta) {
+                        playAudio(message.delta);
+                    }
+                    
+                    if (message.type === 'session.created') {
+                        updateStatus('connected', 'Connected to AI');
+                    }
+                });
                 
-                ws.onclose = () => {
-                    console.log('Disconnected from server');
-                    updateStatus('disconnected', 'Disconnected');
+                // Connect to backend
+                const response = await fetch(`${SERVER_URL}/api/connect`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ sessionId })
+                });
+                
+                if (!response.ok) throw new Error('Connection failed');
+                
+                // Start capturing audio
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                const audioContext = new AudioContext({ sampleRate: 24000 });
+                const source = audioContext.createMediaStreamSource(stream);
+                
+                await audioContext.audioWorklet.addModule(createAudioProcessor());
+                const processor = new AudioWorkletNode(audioContext, 'audio-processor');
+                
+                source.connect(processor);
+                
+                // Send audio to server
+                processor.port.onmessage = async (event) => {
+                    const audioData = Array.from(event.data);
+                    const base64Audio = btoa(String.fromCharCode(...new Uint8Array(event.data.buffer)));
+                    
+                    await fetch(`${SERVER_URL}/api/send-audio`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ 
+                            sessionId, 
+                            audio: base64Audio 
+                        })
+                    });
                 };
                 
             } catch (error) {
@@ -120,7 +123,6 @@
             isPlaying = true;
             const audioData = audioQueue.shift();
             
-            // Convert to audio buffer and play
             const audioBuffer = audioContext.createBuffer(1, audioData.length / 2, 24000);
             const channelData = audioBuffer.getChannelData(0);
             
@@ -136,7 +138,6 @@
             source.start();
         }
 
-        // Create audio processor worklet
         function createAudioProcessor() {
             const processorCode = `
                 class AudioProcessor extends AudioWorkletProcessor {
@@ -159,6 +160,8 @@
             const blob = new Blob([processorCode], { type: 'application/javascript' });
             return URL.createObjectURL(blob);
         }
+
+        connectToServer();
     </script>
 </body>
 </html>
