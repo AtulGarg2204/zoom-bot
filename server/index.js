@@ -243,23 +243,164 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// Endpoint to initiate connection
+// // Endpoint to initiate connection
+// app.post('/api/connect', async (req, res) => {
+//   const { sessionId } = req.body;
+  
+//   console.log('\n🔵 === CONNECT REQUEST ===');
+//   console.log('📦 Request body:', req.body);
+//   console.log('🆔 Session ID:', sessionId);
+  
+//   if (!sessionId) {
+//     console.log('❌ No sessionId provided');
+//     return res.status(400).json({ error: 'sessionId is required' });
+//   }
+  
+//   try {
+//     console.log('🔌 Attempting to connect to OpenAI...');
+    
+//     // Connect to OpenAI Realtime API
+//     const openaiWs = new WebSocket(
+//       'wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-12-17',
+//       {
+//         headers: {
+//           'Authorization': `Bearer ${OPENAI_API_KEY}`,
+//           'OpenAI-Beta': 'realtime=v1'
+//         }
+//       }
+//     );
+    
+//   openaiWs.on('open', () => {
+//     console.log('✅ OpenAI connected:', sessionId);
+    
+//     openaiWs.send(JSON.stringify({
+//         type: 'session.update',
+//         session: {
+//             modalities: ['text', 'audio'],
+//             instructions: 'You are a helpful AI assistant. Be conversational and respond when spoken to.',
+//             voice: 'alloy',
+//             input_audio_format: 'pcm16',
+//             output_audio_format: 'pcm16',
+//             turn_detection: {
+//                 type: 'server_vad',
+//                 threshold: 0.5,
+//                 prefix_padding_ms: 300,
+//                 silence_duration_ms: 700
+//             }
+//         }
+//     }));
+    
+//     openaiConnections.set(sessionId, openaiWs);
+//     console.log('💾 Stored connection. Total:', openaiConnections.size);
+    
+//     // ADD THIS: Keep-alive to prevent connection timeout
+//     const keepAliveInterval = setInterval(() => {
+//         if (openaiWs.readyState === WebSocket.OPEN) {
+//             console.log('💓 Keep-alive ping for session:', sessionId);
+//             // Send empty commit to keep connection alive
+//             openaiWs.send(JSON.stringify({
+//                 type: 'input_audio_buffer.clear'
+//             }));
+//         } else {
+//             console.log('🔴 Connection not open, stopping keep-alive');
+//             clearInterval(keepAliveInterval);
+//         }
+//     }, 20000); // Every 20 seconds
+    
+//     // Store interval reference for cleanup
+//     openaiWs.keepAliveInterval = keepAliveInterval;
+// });
+    
+//     // OpenAI -> Store audio locally or send via Pusher
+//     openaiWs.on('message', (data) => {
+//       try {
+//         const message = JSON.parse(data.toString());
+//         console.log('📨 Message from OpenAI:', message.type);
+        
+//         if (message.type === 'session.created') {
+//           console.log('🎉 OpenAI session created successfully');
+//         }
+        
+//         if (message.type === 'response.audio.delta') {
+//           console.log('🔊 Audio response received from OpenAI');
+          
+//           // Store audio locally instead of sending via Pusher
+//           if (!audioResponses.has(sessionId)) {
+//             audioResponses.set(sessionId, []);
+//           }
+//           audioResponses.get(sessionId).push(message.delta);
+//         }
+        
+//         if (message.type === 'input_audio_buffer.speech_started') {
+//           console.log('🎤 OpenAI detected speech start');
+//         }
+        
+//         if (message.type === 'input_audio_buffer.speech_stopped') {
+//           console.log('🎤 OpenAI detected speech stop');
+//         }
+        
+//         // Only send non-audio messages via Pusher
+//         if (message.type !== 'response.audio.delta') {
+//           const channel = `session-${sessionId}`;
+//           pusher.trigger(channel, 'openai-message', message).catch(err => {
+//             console.error('❌ Pusher error:', err.message);
+//           });
+//         }
+        
+//       } catch (error) {
+//         console.error('❌ Error parsing OpenAI message:', error);
+//       }
+//     });
+//    openaiWs.on('close', () => {
+//     console.log('🔴 Disconnected:', sessionId);
+    
+//     // Clean up keep-alive interval
+//     if (openaiWs.keepAliveInterval) {
+//         clearInterval(openaiWs.keepAliveInterval);
+//         console.log('🧹 Cleaned up keep-alive interval');
+//     }
+    
+//     openaiConnections.delete(sessionId);
+//     audioResponses.delete(sessionId);
+// });
+    
+//    openaiWs.on('error', (error) => {
+//     console.error('OpenAI error:', error.message);
+    
+//     // Clean up keep-alive interval on error
+//     if (openaiWs.keepAliveInterval) {
+//         clearInterval(openaiWs.keepAliveInterval);
+//     }
+    
+//     openaiConnections.delete(sessionId);
+//     audioResponses.delete(sessionId);
+// });
+    
+//     res.json({ success: true, sessionId });
+//     console.log('✅ Connect response sent');
+    
+//   } catch (error) {
+//     console.error('❌ Connection error:', error);
+//     res.status(500).json({ error: error.message });
+//   }
+// });
+
 app.post('/api/connect', async (req, res) => {
   const { sessionId } = req.body;
   
-  console.log('\n🔵 === CONNECT REQUEST ===');
-  console.log('📦 Request body:', req.body);
-  console.log('🆔 Session ID:', sessionId);
+  console.log('🔵 CONNECT REQUEST:', sessionId);
   
   if (!sessionId) {
-    console.log('❌ No sessionId provided');
     return res.status(400).json({ error: 'sessionId is required' });
   }
   
+  // Check if already connected
+  if (openaiConnections.has(sessionId)) {
+    console.log('⚠️ Session already connected:', sessionId);
+    return res.json({ success: true, sessionId });
+  }
+  
   try {
-    console.log('🔌 Attempting to connect to OpenAI...');
-    
-    // Connect to OpenAI Realtime API
     const openaiWs = new WebSocket(
       'wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-12-17',
       {
@@ -270,94 +411,104 @@ app.post('/api/connect', async (req, res) => {
       }
     );
     
-    openaiWs.on('open', () => {
-      console.log('✅ Connected to OpenAI for session:', sessionId);
+    // WAIT for connection to be ready
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new Error('Connection timeout'));
+      }, 10000); // 10 second timeout
       
-      // Configure session
-      const sessionConfig = {
-        type: 'session.update',
-        session: {
-          modalities: ['text', 'audio'],
-          instructions: 'You are a helpful AI meeting assistant. Be concise, friendly, and natural in conversation. Keep responses under 3 sentences.',
-          voice: 'alloy',
-          input_audio_format: 'pcm16',
-          output_audio_format: 'pcm16',
-          turn_detection: {
-            type: 'server_vad',
-            threshold: 0.5,
-            prefix_padding_ms: 300,
-            silence_duration_ms: 500
+      openaiWs.on('open', () => {
+        clearTimeout(timeout);
+        console.log('✅ OpenAI connected:', sessionId);
+        
+        // Send session config
+        openaiWs.send(JSON.stringify({
+          type: 'session.update',
+          session: {
+            modalities: ['text', 'audio'],
+            instructions: 'You are a helpful AI assistant. Be conversational and respond when spoken to.',
+            voice: 'alloy',
+            input_audio_format: 'pcm16',
+            output_audio_format: 'pcm16',
+            turn_detection: {
+              type: 'server_vad',
+              threshold: 0.5,
+              prefix_padding_ms: 300,
+              silence_duration_ms: 700
+            }
           }
-        }
-      };
+        }));
+        
+        // Store connection
+        openaiConnections.set(sessionId, openaiWs);
+        console.log('💾 Connection stored. Total:', openaiConnections.size);
+        
+        // Keep-alive to prevent timeout
+        const keepAliveInterval = setInterval(() => {
+          if (openaiWs.readyState === WebSocket.OPEN) {
+            console.log('💓 Keep-alive ping:', sessionId);
+            openaiWs.send(JSON.stringify({
+              type: 'input_audio_buffer.clear'
+            }));
+          } else {
+            clearInterval(keepAliveInterval);
+          }
+        }, 20000); // Every 20 seconds
+        
+        openaiWs.keepAliveInterval = keepAliveInterval;
+        
+        resolve(); // Connection is ready!
+      });
       
-      console.log('📤 Sending session config to OpenAI');
-      openaiWs.send(JSON.stringify(sessionConfig));
-      
-      openaiConnections.set(sessionId, openaiWs);
-      console.log('💾 Stored connection for session:', sessionId);
-      console.log('📊 Total active connections:', openaiConnections.size);
+      openaiWs.on('error', (error) => {
+        clearTimeout(timeout);
+        console.error('❌ Connection error:', error.message);
+        reject(error);
+      });
     });
     
-    // OpenAI -> Store audio locally or send via Pusher
+    // Set up message handlers AFTER connection is established
     openaiWs.on('message', (data) => {
       try {
         const message = JSON.parse(data.toString());
-        console.log('📨 Message from OpenAI:', message.type);
-        
-        if (message.type === 'session.created') {
-          console.log('🎉 OpenAI session created successfully');
-        }
         
         if (message.type === 'response.audio.delta') {
-          console.log('🔊 Audio response received from OpenAI');
-          
-          // Store audio locally instead of sending via Pusher
           if (!audioResponses.has(sessionId)) {
             audioResponses.set(sessionId, []);
           }
           audioResponses.get(sessionId).push(message.delta);
         }
         
-        if (message.type === 'input_audio_buffer.speech_started') {
-          console.log('🎤 OpenAI detected speech start');
-        }
-        
-        if (message.type === 'input_audio_buffer.speech_stopped') {
-          console.log('🎤 OpenAI detected speech stop');
-        }
-        
-        // Only send non-audio messages via Pusher
         if (message.type !== 'response.audio.delta') {
-          const channel = `session-${sessionId}`;
-          pusher.trigger(channel, 'openai-message', message).catch(err => {
-            console.error('❌ Pusher error:', err.message);
-          });
+          pusher.trigger(`session-${sessionId}`, 'openai-message', message).catch(() => {});
         }
-        
       } catch (error) {
-        console.error('❌ Error parsing OpenAI message:', error);
+        console.error('Message parse error:', error.message);
       }
     });
     
     openaiWs.on('close', () => {
-      console.log('🔴 OpenAI disconnected for session:', sessionId);
+      console.log('🔴 Connection closed:', sessionId);
+      if (openaiWs.keepAliveInterval) {
+        clearInterval(openaiWs.keepAliveInterval);
+      }
       openaiConnections.delete(sessionId);
       audioResponses.delete(sessionId);
-      console.log('📊 Remaining connections:', openaiConnections.size);
     });
     
     openaiWs.on('error', (error) => {
-      console.error('❌ OpenAI WebSocket error:', error.message);
-      openaiConnections.delete(sessionId);
-      audioResponses.delete(sessionId);
+      console.error('OpenAI error:', error.message);
+      if (openaiWs.keepAliveInterval) {
+        clearInterval(openaiWs.keepAliveInterval);
+      }
     });
     
+    // NOW respond - connection is ready!
     res.json({ success: true, sessionId });
-    console.log('✅ Connect response sent');
+    console.log('✅ Response sent - connection ready');
     
   } catch (error) {
-    console.error('❌ Connection error:', error);
+    console.error('❌ Connect failed:', error.message);
     res.status(500).json({ error: error.message });
   }
 });

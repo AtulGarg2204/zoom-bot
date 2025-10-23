@@ -270,7 +270,7 @@
     <script>
         // Get server URL from query parameters
         const params = new URLSearchParams(window.location.search);
-        const SERVER_URL = params.get('server') || 'https://zoom-bot-zkf2.vercel.app';
+        const SERVER_URL = params.get('server') || 'http://localhost:3000';
         const PUSHER_KEY = params.get('pusher_key') || '53efc497795d6002deb2';
         const PUSHER_CLUSTER = params.get('pusher_cluster') || 'ap2';
         
