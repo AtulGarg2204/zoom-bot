@@ -1,3 +1,5 @@
+
+
 // const express = require('express');
 // const cors = require('cors');
 // const Pusher = require('pusher');
@@ -15,6 +17,8 @@
 //   useTLS: true
 // });
 
+// console.log('🔧 Pusher initialized with cluster:', process.env.PUSHER_CLUSTER);
+
 // // Middleware
 // app.use(cors({
 //   origin: '*',
@@ -25,24 +29,30 @@
 // app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+// console.log('🔑 OpenAI API Key present:', !!OPENAI_API_KEY);
 
 // // Store active OpenAI connections
 // const openaiConnections = new Map();
+// // Store audio responses per session
+// const audioResponses = new Map();
 
 // // Routes
 // app.get('/', (req, res) => {
+//   console.log('📍 Root endpoint hit');
 //   res.json({ 
 //     message: 'Zoom Voice Bot API',
 //     status: 'running',
 //     endpoints: {
 //       health: '/api/health',
 //       connect: '/api/connect',
-//       sendAudio: '/api/send-audio'
+//       sendAudio: '/api/send-audio',
+//       getAudio: '/api/get-audio/:sessionId'
 //     }
 //   });
 // });
 
 // app.get('/api/health', (req, res) => {
+//   console.log('📍 Health check endpoint hit');
 //   res.json({ 
 //     status: 'ok', 
 //     connections: openaiConnections.size,
@@ -51,199 +61,6 @@
 // });
 
 // // Endpoint to initiate connection
-// app.post('/api/connect', async (req, res) => {
-//   const { sessionId } = req.body;
-  
-//   if (!sessionId) {
-//     return res.status(400).json({ error: 'sessionId is required' });
-//   }
-  
-//   try {
-//     console.log('Connecting session:', sessionId);
-    
-//     // Connect to OpenAI Realtime API
-//     const openaiWs = new WebSocket(
-//       'wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-12-17',
-//       {
-//         headers: {
-//           'Authorization': `Bearer ${OPENAI_API_KEY}`,
-//           'OpenAI-Beta': 'realtime=v1'
-//         }
-//       }
-//     );
-    
-//     openaiWs.on('open', () => {
-//       console.log('Connected to OpenAI for session:', sessionId);
-      
-//       // Configure session
-//       openaiWs.send(JSON.stringify({
-//         type: 'session.update',
-//         session: {
-//           modalities: ['text', 'audio'],
-//           instructions: 'You are a helpful AI meeting assistant. Be concise, friendly, and natural in conversation.',
-//           voice: 'alloy',
-//           input_audio_format: 'pcm16',
-//           output_audio_format: 'pcm16',
-//           turn_detection: {
-//             type: 'server_vad',
-//             threshold: 0.5,
-//             prefix_padding_ms: 300,
-//             silence_duration_ms: 500
-//           }
-//         }
-//       }));
-      
-//       openaiConnections.set(sessionId, openaiWs);
-//     });
-    
-//     // OpenAI -> Pusher (send to client)
-//     openaiWs.on('message', (data) => {
-//       try {
-//         const message = JSON.parse(data.toString());
-//         pusher.trigger(`session-${sessionId}`, 'openai-message', message);
-//       } catch (error) {
-//         console.error('Error parsing OpenAI message:', error);
-//       }
-//     });
-    
-//     openaiWs.on('close', () => {
-//       console.log('OpenAI disconnected for session:', sessionId);
-//       openaiConnections.delete(sessionId);
-//     });
-    
-//     openaiWs.on('error', (error) => {
-//       console.error('OpenAI error:', error);
-//       openaiConnections.delete(sessionId);
-//     });
-    
-//     res.json({ success: true, sessionId });
-    
-//   } catch (error) {
-//     console.error('Connection error:', error);
-//     res.status(500).json({ error: error.message });
-//   }
-// });
-
-// // Endpoint to send audio to OpenAI
-// app.post('/api/send-audio', async (req, res) => {
-//   const { sessionId, audio } = req.body;
-  
-//   if (!sessionId || !audio) {
-//     return res.status(400).json({ error: 'sessionId and audio are required' });
-//   }
-  
-//   const openaiWs = openaiConnections.get(sessionId);
-  
-//   if (openaiWs && openaiWs.readyState === WebSocket.OPEN) {
-//     try {
-//       openaiWs.send(JSON.stringify({
-//         type: 'input_audio_buffer.append',
-//         audio: audio
-//       }));
-//       res.json({ success: true });
-//     } catch (error) {
-//       console.error('Error sending audio:', error);
-//       res.status(500).json({ error: 'Failed to send audio' });
-//     }
-//   } else {
-//     res.status(400).json({ error: 'No active connection' });
-//   }
-// });
-
-// // Error handling middleware
-// app.use((error, req, res, next) => {
-//   console.error('❌ Server Error:', error);
-  
-//   res.status(500).json({ 
-//     error: 'Internal server error',
-//     ...(process.env.NODE_ENV === 'development' && { details: error.message })
-//   });
-// });
-
-// // 404 handler
-// app.use((req, res) => {
-//   res.status(404).json({ error: 'Route not found' });
-// });
-
-// // For local development
-// const startServer = async () => {
-//   const PORT = process.env.PORT || 3000;
-//   app.listen(PORT, () => {
-//     console.log(`🚀 Server running on port ${PORT}`);
-//     console.log(`📡 Pusher Channels ready for real-time updates`);
-//     console.log(`🌐 API available at: http://localhost:${PORT}`);
-//   });
-// };
-
-// // Only start server if not in a serverless environment
-// if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
-//   startServer();
-// }
-
-// // Export the Express app for Vercel
-// module.exports = app;
-
-const express = require('express');
-const cors = require('cors');
-const Pusher = require('pusher');
-const WebSocket = require('ws');
-require('dotenv').config();
-
-const app = express();
-
-// Initialize Pusher
-const pusher = new Pusher({
-  appId: process.env.PUSHER_APP_ID,
-  key: process.env.PUSHER_KEY,
-  secret: process.env.PUSHER_SECRET,
-  cluster: process.env.PUSHER_CLUSTER,
-  useTLS: true
-});
-
-console.log('🔧 Pusher initialized with cluster:', process.env.PUSHER_CLUSTER);
-
-// Middleware
-app.use(cors({
-  origin: '*',
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Origin', 'X-Requested-With', 'Content-Type', 'Accept', 'Authorization'],
-}));
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-console.log('🔑 OpenAI API Key present:', !!OPENAI_API_KEY);
-
-// Store active OpenAI connections
-const openaiConnections = new Map();
-// Store audio responses per session
-const audioResponses = new Map();
-
-// Routes
-app.get('/', (req, res) => {
-  console.log('📍 Root endpoint hit');
-  res.json({ 
-    message: 'Zoom Voice Bot API',
-    status: 'running',
-    endpoints: {
-      health: '/api/health',
-      connect: '/api/connect',
-      sendAudio: '/api/send-audio',
-      getAudio: '/api/get-audio/:sessionId'
-    }
-  });
-});
-
-app.get('/api/health', (req, res) => {
-  console.log('📍 Health check endpoint hit');
-  res.json({ 
-    status: 'ok', 
-    connections: openaiConnections.size,
-    timestamp: new Date().toISOString()
-  });
-});
-
-// Endpoint to initiate connection
 // app.post('/api/connect', async (req, res) => {
 //   const { sessionId } = req.body;
   
@@ -362,13 +179,183 @@ app.get('/api/health', (req, res) => {
 //   }
 // });
 
+// // Endpoint to send audio to OpenAI
+// app.post('/api/send-audio', async (req, res) => {
+//   const { sessionId, audio } = req.body;
+  
+//   console.log('\n🔵 === SEND AUDIO REQUEST ===');
+//   console.log('🆔 Session ID:', sessionId);
+//   console.log('🎵 Audio data length:', audio ? audio.length : 0);
+  
+//   if (!sessionId || !audio) {
+//     console.log('❌ Missing required fields');
+//     return res.status(400).json({ error: 'sessionId and audio are required' });
+//   }
+  
+//   const openaiWs = openaiConnections.get(sessionId);
+  
+//   if (!openaiWs) {
+//     console.log('❌ No connection found for session:', sessionId);
+//     console.log('📊 Active sessions:', Array.from(openaiConnections.keys()));
+//     return res.status(400).json({ error: 'No active connection for this session' });
+//   }
+  
+//   console.log('🔍 WebSocket state:', openaiWs.readyState, '(1 = OPEN)');
+  
+//   if (openaiWs.readyState === WebSocket.OPEN) {
+//     try {
+//       const audioMessage = {
+//         type: 'input_audio_buffer.append',
+//         audio: audio
+//       };
+      
+//       console.log('📤 Sending audio to OpenAI...');
+//       openaiWs.send(JSON.stringify(audioMessage));
+//       console.log('✅ Audio sent successfully');
+      
+//       res.json({ success: true });
+//     } catch (error) {
+//       console.error('❌ Error sending audio:', error);
+//       res.status(500).json({ error: 'Failed to send audio' });
+//     }
+//   } else {
+//     console.log('❌ WebSocket not open. State:', openaiWs.readyState);
+//     res.status(400).json({ error: 'Connection not ready' });
+//   }
+// });
+
+// // Endpoint to get audio responses
+// app.get('/api/get-audio/:sessionId', (req, res) => {
+//   const { sessionId } = req.params;
+  
+//   console.log('🔵 === GET AUDIO REQUEST ===');
+//   console.log('🆔 Session ID:', sessionId);
+  
+//   const audioChunks = audioResponses.get(sessionId) || [];
+  
+//   if (audioChunks.length > 0) {
+//     console.log('✅ Returning', audioChunks.length, 'audio chunks');
+//     const chunks = [...audioChunks];
+//     audioResponses.set(sessionId, []); // Clear after getting
+//     res.json({ audio: chunks });
+//   } else {
+//     res.json({ audio: [] });
+//   }
+// });
+
+// // Error handling middleware
+// app.use((error, req, res, next) => {
+//   console.error('❌ Server Error:', error);
+  
+//   res.status(500).json({ 
+//     error: 'Internal server error',
+//     ...(process.env.NODE_ENV === 'development' && { details: error.message })
+//   });
+// });
+
+// // 404 handler
+// app.use((req, res) => {
+//   console.log('❌ 404 - Route not found:', req.path);
+//   res.status(404).json({ error: 'Route not found' });
+// });
+
+// // For local development
+// const startServer = async () => {
+//   const PORT = process.env.PORT || 3000;
+//   app.listen(PORT, () => {
+//     console.log('\n🚀🚀🚀 SERVER STARTED 🚀🚀🚀');
+//     console.log(`📡 Pusher Channels ready for real-time updates`);
+//     console.log(`🌐 API available at: http://localhost:${PORT}`);
+//     console.log(`🎯 Environment: ${process.env.NODE_ENV || 'development'}\n`);
+//   });
+// };
+
+// // Only start server if not in a serverless environment
+// if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
+//   startServer();
+// }
+
+// // Export the Express app for Vercel
+// module.exports = app;
+
+const express = require('express');
+const cors = require('cors');
+const Pusher = require('pusher');
+const WebSocket = require('ws');
+require('dotenv').config();
+
+const app = express();
+
+// Initialize Pusher
+const pusher = new Pusher({
+  appId: process.env.PUSHER_APP_ID,
+  key: process.env.PUSHER_KEY,
+  secret: process.env.PUSHER_SECRET,
+  cluster: process.env.PUSHER_CLUSTER,
+  useTLS: true
+});
+
+// Middleware
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Origin', 'X-Requested-With', 'Content-Type', 'Accept', 'Authorization'],
+}));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+
+// CRITICAL: Store connections globally to survive function calls
+// Use global object on Vercel to persist across invocations in same instance
+if (!global.openaiConnections) {
+  global.openaiConnections = new Map();
+  console.log('🆕 Initialized global connections Map');
+}
+if (!global.audioResponses) {
+  global.audioResponses = new Map();
+  console.log('🆕 Initialized global audio responses Map');
+}
+
+const openaiConnections = global.openaiConnections;
+const audioResponses = global.audioResponses;
+
+// Log current state on every request
+app.use((req, res, next) => {
+  if (req.path.startsWith('/api/')) {
+    console.log(`📍 ${req.method} ${req.path}`);
+    console.log(`📊 Current connections: ${openaiConnections.size}`);
+    console.log(`📊 Sessions: [${Array.from(openaiConnections.keys()).join(', ')}]`);
+  }
+  next();
+});
+
+// Routes
+app.get('/', (req, res) => {
+  res.json({ 
+    message: 'Zoom Voice Bot API',
+    status: 'running',
+    connections: openaiConnections.size
+  });
+});
+
+app.get('/api/health', (req, res) => {
+  res.json({ 
+    status: 'ok', 
+    connections: openaiConnections.size,
+    sessions: Array.from(openaiConnections.keys()),
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Connect endpoint
 app.post('/api/connect', async (req, res) => {
   const { sessionId } = req.body;
   
   console.log('======================');
   console.log('🔵 CONNECT REQUEST');
   console.log('Session ID:', sessionId);
-  console.log('Current connections BEFORE:', Array.from(openaiConnections.keys()));
+  console.log('Existing connections:', openaiConnections.size);
   console.log('======================');
   
   if (!sessionId) {
@@ -376,13 +363,17 @@ app.post('/api/connect', async (req, res) => {
   }
   
   // Check if already connected
-  if (openaiConnections.has(sessionId)) {
-    console.log('⚠️ Already connected:', sessionId);
+  const existing = openaiConnections.get(sessionId);
+  if (existing && existing.readyState === WebSocket.OPEN) {
+    console.log('⚠️ Connection already exists and is OPEN');
     return res.json({ success: true, sessionId, alreadyConnected: true });
+  } else if (existing) {
+    console.log('⚠️ Stale connection found, removing...');
+    openaiConnections.delete(sessionId);
   }
   
   try {
-    console.log('🔌 Creating WebSocket...');
+    console.log('🔌 Creating new WebSocket connection...');
     
     const openaiWs = new WebSocket(
       'wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-12-17',
@@ -394,247 +385,207 @@ app.post('/api/connect', async (req, res) => {
       }
     );
     
-    console.log('⏳ Waiting for connection...');
+    // IMPORTANT: Store immediately (before 'open' event)
+    openaiConnections.set(sessionId, openaiWs);
+    console.log('💾 Pre-stored WebSocket (state: CONNECTING)');
     
-    // Set up ALL handlers BEFORE waiting
-    await new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        console.error('❌ TIMEOUT after 10 seconds');
-        reject(new Error('Connection timeout'));
-      }, 10000);
+    // Set up all handlers
+    openaiWs.on('open', () => {
+      console.log('✅ WebSocket OPENED for:', sessionId);
       
-      // SETUP 1: Open handler
-      openaiWs.on('open', () => {
-        clearTimeout(timeout);
-        console.log('✅ WebSocket OPENED');
-        
-        try {
-          // Send config
-          console.log('📤 Sending session config...');
-          openaiWs.send(JSON.stringify({
-            type: 'session.update',
-            session: {
-              modalities: ['text', 'audio'],
-              instructions: 'You are a helpful AI assistant. Be conversational and respond when spoken to.',
-              voice: 'alloy',
-              input_audio_format: 'pcm16',
-              output_audio_format: 'pcm16',
-              turn_detection: {
-                type: 'server_vad',
-                threshold: 0.5,
-                prefix_padding_ms: 300,
-                silence_duration_ms: 700
-              }
-            }
-          }));
-          console.log('✅ Config sent');
-          
-          // CRITICAL: Store connection
-          console.log('💾 STORING CONNECTION for:', sessionId);
-          openaiConnections.set(sessionId, openaiWs);
-          console.log('✅ CONNECTION STORED!');
-          console.log('📊 Total connections:', openaiConnections.size);
-          console.log('📊 All sessions:', Array.from(openaiConnections.keys()));
-          
-          // Keep-alive
-          const keepAliveInterval = setInterval(() => {
-            if (openaiWs.readyState === WebSocket.OPEN) {
-              console.log('💓 Keep-alive:', sessionId);
-              try {
-                openaiWs.send(JSON.stringify({
-                  type: 'input_audio_buffer.clear'
-                }));
-              } catch (err) {
-                console.error('Keep-alive error:', err.message);
-                clearInterval(keepAliveInterval);
-              }
-            } else {
-              console.log('🔴 Connection not open, stopping keep-alive');
-              clearInterval(keepAliveInterval);
-            }
-          }, 20000);
-          
-          openaiWs.keepAliveInterval = keepAliveInterval;
-          console.log('✅ Keep-alive started');
-          
-          resolve(); // All done!
-          
-        } catch (err) {
-          console.error('❌ Error in open handler:', err);
-          reject(err);
-        }
-      });
-      
-      // SETUP 2: Error handler (before open)
-      openaiWs.on('error', (error) => {
-        clearTimeout(timeout);
-        console.error('❌ WebSocket ERROR:', error.message);
-        
-        // Clean up
-        if (openaiWs.keepAliveInterval) {
-          clearInterval(openaiWs.keepAliveInterval);
-        }
-        openaiConnections.delete(sessionId);
-        audioResponses.delete(sessionId);
-        
-        reject(error);
-      });
-      
-      // SETUP 3: Close handler (before open)
-      openaiWs.on('close', (code, reason) => {
-        console.log('🔴 CONNECTION CLOSED');
-        console.log('Session:', sessionId);
-        console.log('Code:', code);
-        console.log('Reason:', reason);
-        
-        // Clean up
-        if (openaiWs.keepAliveInterval) {
-          clearInterval(openaiWs.keepAliveInterval);
-        }
-        openaiConnections.delete(sessionId);
-        audioResponses.delete(sessionId);
-        
-        console.log('📊 Connections after close:', openaiConnections.size);
-      });
-      
-      // SETUP 4: Message handler (before open)
-      openaiWs.on('message', (data) => {
-        try {
-          const message = JSON.parse(data.toString());
-          
-          if (message.type === 'session.created') {
-            console.log('🎉 Session created!');
+      // Send config
+      openaiWs.send(JSON.stringify({
+        type: 'session.update',
+        session: {
+          modalities: ['text', 'audio'],
+          instructions: 'You are a helpful AI assistant. Be conversational and respond when spoken to.',
+          voice: 'alloy',
+          input_audio_format: 'pcm16',
+          output_audio_format: 'pcm16',
+          turn_detection: {
+            type: 'server_vad',
+            threshold: 0.5,
+            prefix_padding_ms: 300,
+            silence_duration_ms: 700
           }
-          
-          if (message.type === 'response.audio.delta') {
-            if (!audioResponses.has(sessionId)) {
-              audioResponses.set(sessionId, []);
-            }
-            audioResponses.get(sessionId).push(message.delta);
-          }
-          
-          if (message.type !== 'response.audio.delta') {
-            pusher.trigger(`session-${sessionId}`, 'openai-message', message).catch(() => {});
-          }
-        } catch (err) {
-          console.error('Message parse error:', err.message);
         }
-      });
+      }));
+      
+      console.log('✅ Session config sent');
+      
+      // Keep-alive
+      const keepAlive = setInterval(() => {
+        if (openaiWs.readyState === WebSocket.OPEN) {
+          console.log('💓 Keep-alive ping');
+          openaiWs.ping();
+        } else {
+          clearInterval(keepAlive);
+        }
+      }, 30000);
+      
+      openaiWs.keepAliveInterval = keepAlive;
     });
     
-    // Connection is ready, respond to client
-    console.log('======================');
-    console.log('✅ CONNECT SUCCESS');
-    console.log('Final connection count:', openaiConnections.size);
-    console.log('Final sessions:', Array.from(openaiConnections.keys()));
+    openaiWs.on('message', (data) => {
+      try {
+        const message = JSON.parse(data.toString());
+        
+        if (message.type === 'session.created') {
+          console.log('🎉 Session created!');
+        }
+        
+        if (message.type === 'response.audio.delta') {
+          if (!audioResponses.has(sessionId)) {
+            audioResponses.set(sessionId, []);
+          }
+          audioResponses.get(sessionId).push(message.delta);
+        }
+        
+        if (message.type !== 'response.audio.delta') {
+          pusher.trigger(`session-${sessionId}`, 'openai-message', message).catch(() => {});
+        }
+      } catch (err) {
+        console.error('Message parse error:', err.message);
+      }
+    });
+    
+    openaiWs.on('close', (code, reason) => {
+      console.log('🔴 WebSocket CLOSED');
+      console.log('Session:', sessionId);
+      console.log('Code:', code);
+      console.log('Reason:', reason);
+      
+      // DON'T delete immediately - might be temporary
+      // Only delete if it's a clean close (code 1000)
+      if (code === 1000) {
+        console.log('🧹 Clean close - removing connection');
+        if (openaiWs.keepAliveInterval) {
+          clearInterval(openaiWs.keepAliveInterval);
+        }
+        openaiConnections.delete(sessionId);
+        audioResponses.delete(sessionId);
+      } else {
+        console.log('⚠️ Abnormal close - keeping connection for retry');
+      }
+    });
+    
+    openaiWs.on('error', (error) => {
+      console.error('❌ WebSocket error:', error.message);
+      
+      // Clean up on error
+      if (openaiWs.keepAliveInterval) {
+        clearInterval(openaiWs.keepAliveInterval);
+      }
+      openaiConnections.delete(sessionId);
+      audioResponses.delete(sessionId);
+    });
+    
+    // Give it a moment to connect
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    
+    console.log('✅ Connection setup complete');
+    console.log('📊 Total connections:', openaiConnections.size);
     console.log('======================');
     
     res.json({ success: true, sessionId });
     
   } catch (error) {
-    console.error('======================');
-    console.error('❌ CONNECT FAILED');
-    console.error('Error:', error.message);
-    console.error('======================');
+    console.error('❌ Connect failed:', error.message);
+    openaiConnections.delete(sessionId);
     res.status(500).json({ error: error.message });
   }
 });
 
-// Endpoint to send audio to OpenAI
+// Send audio endpoint
 app.post('/api/send-audio', async (req, res) => {
   const { sessionId, audio } = req.body;
   
-  console.log('\n🔵 === SEND AUDIO REQUEST ===');
-  console.log('🆔 Session ID:', sessionId);
-  console.log('🎵 Audio data length:', audio ? audio.length : 0);
+  console.log('🔵 SEND AUDIO');
+  console.log('Session:', sessionId);
+  console.log('Audio length:', audio ? audio.length : 0);
+  console.log('Active sessions:', Array.from(openaiConnections.keys()));
   
   if (!sessionId || !audio) {
-    console.log('❌ Missing required fields');
-    return res.status(400).json({ error: 'sessionId and audio are required' });
+    return res.status(400).json({ error: 'Missing sessionId or audio' });
   }
   
   const openaiWs = openaiConnections.get(sessionId);
   
   if (!openaiWs) {
-    console.log('❌ No connection found for session:', sessionId);
-    console.log('📊 Active sessions:', Array.from(openaiConnections.keys()));
-    return res.status(400).json({ error: 'No active connection for this session' });
+    console.log('❌ NO CONNECTION');
+    console.log('Available:', Array.from(openaiConnections.keys()));
+    return res.status(400).json({ 
+      error: 'No active connection',
+      sessionId,
+      available: Array.from(openaiConnections.keys())
+    });
   }
   
-  console.log('🔍 WebSocket state:', openaiWs.readyState, '(1 = OPEN)');
+  console.log('WS State:', openaiWs.readyState);
   
-  if (openaiWs.readyState === WebSocket.OPEN) {
-    try {
-      const audioMessage = {
-        type: 'input_audio_buffer.append',
-        audio: audio
-      };
-      
-      console.log('📤 Sending audio to OpenAI...');
-      openaiWs.send(JSON.stringify(audioMessage));
-      console.log('✅ Audio sent successfully');
-      
-      res.json({ success: true });
-    } catch (error) {
-      console.error('❌ Error sending audio:', error);
-      res.status(500).json({ error: 'Failed to send audio' });
-    }
-  } else {
-    console.log('❌ WebSocket not open. State:', openaiWs.readyState);
-    res.status(400).json({ error: 'Connection not ready' });
+  if (openaiWs.readyState !== WebSocket.OPEN) {
+    console.log('❌ Connection not open:', openaiWs.readyState);
+    return res.status(400).json({ error: 'Connection not ready' });
+  }
+  
+  try {
+    openaiWs.send(JSON.stringify({
+      type: 'input_audio_buffer.append',
+      audio: audio
+    }));
+    console.log('✅ Audio sent');
+    res.json({ success: true });
+  } catch (error) {
+    console.error('❌ Send error:', error.message);
+    res.status(500).json({ error: error.message });
   }
 });
 
-// Endpoint to get audio responses
-app.get('/api/get-audio/:sessionId', (req, res) => {
+// SSE for audio streaming
+app.get('/api/stream-audio/:sessionId', (req, res) => {
   const { sessionId } = req.params;
   
-  console.log('🔵 === GET AUDIO REQUEST ===');
-  console.log('🆔 Session ID:', sessionId);
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('Access-Control-Allow-Origin', '*');
   
-  const audioChunks = audioResponses.get(sessionId) || [];
+  res.write('data: {"type":"connected"}\n\n');
   
-  if (audioChunks.length > 0) {
-    console.log('✅ Returning', audioChunks.length, 'audio chunks');
-    const chunks = [...audioChunks];
-    audioResponses.set(sessionId, []); // Clear after getting
-    res.json({ audio: chunks });
-  } else {
-    res.json({ audio: [] });
-  }
-});
-
-// Error handling middleware
-app.use((error, req, res, next) => {
-  console.error('❌ Server Error:', error);
+  const interval = setInterval(() => {
+    const chunks = audioResponses.get(sessionId) || [];
+    if (chunks.length > 0) {
+      const data = [...chunks];
+      audioResponses.set(sessionId, []);
+      res.write(`data: ${JSON.stringify({ audio: data })}\n\n`);
+    }
+  }, 50);
   
-  res.status(500).json({ 
-    error: 'Internal server error',
-    ...(process.env.NODE_ENV === 'development' && { details: error.message })
+  req.on('close', () => {
+    clearInterval(interval);
   });
 });
 
-// 404 handler
-app.use((req, res) => {
-  console.log('❌ 404 - Route not found:', req.path);
-  res.status(404).json({ error: 'Route not found' });
+// Error handlers
+app.use((error, req, res, next) => {
+  console.error('Server error:', error);
+  res.status(500).json({ error: 'Internal error' });
 });
 
-// For local development
-const startServer = async () => {
+app.use((req, res) => {
+  res.status(404).json({ error: 'Not found' });
+});
+
+// Start server (local only)
+const startServer = () => {
   const PORT = process.env.PORT || 3000;
   app.listen(PORT, () => {
-    console.log('\n🚀🚀🚀 SERVER STARTED 🚀🚀🚀');
-    console.log(`📡 Pusher Channels ready for real-time updates`);
-    console.log(`🌐 API available at: http://localhost:${PORT}`);
-    console.log(`🎯 Environment: ${process.env.NODE_ENV || 'development'}\n`);
+    console.log(`🚀 Server on port ${PORT}`);
   });
 };
 
-// Only start server if not in a serverless environment
 if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
   startServer();
 }
 
-// Export the Express app for Vercel
 module.exports = app;
