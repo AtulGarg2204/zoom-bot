@@ -243,7 +243,7 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// // Endpoint to initiate connection
+// Endpoint to initiate connection
 // app.post('/api/connect', async (req, res) => {
 //   const { sessionId } = req.body;
   
@@ -270,46 +270,34 @@ app.get('/api/health', (req, res) => {
 //       }
 //     );
     
-//   openaiWs.on('open', () => {
-//     console.log('✅ OpenAI connected:', sessionId);
-    
-//     openaiWs.send(JSON.stringify({
+//     openaiWs.on('open', () => {
+//       console.log('✅ Connected to OpenAI for session:', sessionId);
+      
+//       // Configure session
+//       const sessionConfig = {
 //         type: 'session.update',
 //         session: {
-//             modalities: ['text', 'audio'],
-//             instructions: 'You are a helpful AI assistant. Be conversational and respond when spoken to.',
-//             voice: 'alloy',
-//             input_audio_format: 'pcm16',
-//             output_audio_format: 'pcm16',
-//             turn_detection: {
-//                 type: 'server_vad',
-//                 threshold: 0.5,
-//                 prefix_padding_ms: 300,
-//                 silence_duration_ms: 700
-//             }
+//           modalities: ['text', 'audio'],
+//           instructions: 'You are a helpful AI meeting assistant. Be concise, friendly, and natural in conversation. Keep responses under 3 sentences.',
+//           voice: 'alloy',
+//           input_audio_format: 'pcm16',
+//           output_audio_format: 'pcm16',
+//           turn_detection: {
+//             type: 'server_vad',
+//             threshold: 0.5,
+//             prefix_padding_ms: 300,
+//             silence_duration_ms: 500
+//           }
 //         }
-//     }));
-    
-//     openaiConnections.set(sessionId, openaiWs);
-//     console.log('💾 Stored connection. Total:', openaiConnections.size);
-    
-//     // ADD THIS: Keep-alive to prevent connection timeout
-//     const keepAliveInterval = setInterval(() => {
-//         if (openaiWs.readyState === WebSocket.OPEN) {
-//             console.log('💓 Keep-alive ping for session:', sessionId);
-//             // Send empty commit to keep connection alive
-//             openaiWs.send(JSON.stringify({
-//                 type: 'input_audio_buffer.clear'
-//             }));
-//         } else {
-//             console.log('🔴 Connection not open, stopping keep-alive');
-//             clearInterval(keepAliveInterval);
-//         }
-//     }, 20000); // Every 20 seconds
-    
-//     // Store interval reference for cleanup
-//     openaiWs.keepAliveInterval = keepAliveInterval;
-// });
+//       };
+      
+//       console.log('📤 Sending session config to OpenAI');
+//       openaiWs.send(JSON.stringify(sessionConfig));
+      
+//       openaiConnections.set(sessionId, openaiWs);
+//       console.log('💾 Stored connection for session:', sessionId);
+//       console.log('📊 Total active connections:', openaiConnections.size);
+//     });
     
 //     // OpenAI -> Store audio locally or send via Pusher
 //     openaiWs.on('message', (data) => {
@@ -351,30 +339,19 @@ app.get('/api/health', (req, res) => {
 //         console.error('❌ Error parsing OpenAI message:', error);
 //       }
 //     });
-//    openaiWs.on('close', () => {
-//     console.log('🔴 Disconnected:', sessionId);
     
-//     // Clean up keep-alive interval
-//     if (openaiWs.keepAliveInterval) {
-//         clearInterval(openaiWs.keepAliveInterval);
-//         console.log('🧹 Cleaned up keep-alive interval');
-//     }
+//     openaiWs.on('close', () => {
+//       console.log('🔴 OpenAI disconnected for session:', sessionId);
+//       openaiConnections.delete(sessionId);
+//       audioResponses.delete(sessionId);
+//       console.log('📊 Remaining connections:', openaiConnections.size);
+//     });
     
-//     openaiConnections.delete(sessionId);
-//     audioResponses.delete(sessionId);
-// });
-    
-//    openaiWs.on('error', (error) => {
-//     console.error('OpenAI error:', error.message);
-    
-//     // Clean up keep-alive interval on error
-//     if (openaiWs.keepAliveInterval) {
-//         clearInterval(openaiWs.keepAliveInterval);
-//     }
-    
-//     openaiConnections.delete(sessionId);
-//     audioResponses.delete(sessionId);
-// });
+//     openaiWs.on('error', (error) => {
+//       console.error('❌ OpenAI WebSocket error:', error.message);
+//       openaiConnections.delete(sessionId);
+//       audioResponses.delete(sessionId);
+//     });
     
 //     res.json({ success: true, sessionId });
 //     console.log('✅ Connect response sent');
@@ -388,7 +365,11 @@ app.get('/api/health', (req, res) => {
 app.post('/api/connect', async (req, res) => {
   const { sessionId } = req.body;
   
-  console.log('🔵 CONNECT REQUEST:', sessionId);
+  console.log('======================');
+  console.log('🔵 CONNECT REQUEST');
+  console.log('Session ID:', sessionId);
+  console.log('Current connections BEFORE:', Array.from(openaiConnections.keys()));
+  console.log('======================');
   
   if (!sessionId) {
     return res.status(400).json({ error: 'sessionId is required' });
@@ -396,11 +377,13 @@ app.post('/api/connect', async (req, res) => {
   
   // Check if already connected
   if (openaiConnections.has(sessionId)) {
-    console.log('⚠️ Session already connected:', sessionId);
-    return res.json({ success: true, sessionId });
+    console.log('⚠️ Already connected:', sessionId);
+    return res.json({ success: true, sessionId, alreadyConnected: true });
   }
   
   try {
+    console.log('🔌 Creating WebSocket...');
+    
     const openaiWs = new WebSocket(
       'wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-12-17',
       {
@@ -411,104 +394,148 @@ app.post('/api/connect', async (req, res) => {
       }
     );
     
-    // WAIT for connection to be ready
+    console.log('⏳ Waiting for connection...');
+    
+    // Set up ALL handlers BEFORE waiting
     await new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
+        console.error('❌ TIMEOUT after 10 seconds');
         reject(new Error('Connection timeout'));
-      }, 10000); // 10 second timeout
+      }, 10000);
       
+      // SETUP 1: Open handler
       openaiWs.on('open', () => {
         clearTimeout(timeout);
-        console.log('✅ OpenAI connected:', sessionId);
+        console.log('✅ WebSocket OPENED');
         
-        // Send session config
-        openaiWs.send(JSON.stringify({
-          type: 'session.update',
-          session: {
-            modalities: ['text', 'audio'],
-            instructions: 'You are a helpful AI assistant. Be conversational and respond when spoken to.',
-            voice: 'alloy',
-            input_audio_format: 'pcm16',
-            output_audio_format: 'pcm16',
-            turn_detection: {
-              type: 'server_vad',
-              threshold: 0.5,
-              prefix_padding_ms: 300,
-              silence_duration_ms: 700
+        try {
+          // Send config
+          console.log('📤 Sending session config...');
+          openaiWs.send(JSON.stringify({
+            type: 'session.update',
+            session: {
+              modalities: ['text', 'audio'],
+              instructions: 'You are a helpful AI assistant. Be conversational and respond when spoken to.',
+              voice: 'alloy',
+              input_audio_format: 'pcm16',
+              output_audio_format: 'pcm16',
+              turn_detection: {
+                type: 'server_vad',
+                threshold: 0.5,
+                prefix_padding_ms: 300,
+                silence_duration_ms: 700
+              }
             }
-          }
-        }));
-        
-        // Store connection
-        openaiConnections.set(sessionId, openaiWs);
-        console.log('💾 Connection stored. Total:', openaiConnections.size);
-        
-        // Keep-alive to prevent timeout
-        const keepAliveInterval = setInterval(() => {
-          if (openaiWs.readyState === WebSocket.OPEN) {
-            console.log('💓 Keep-alive ping:', sessionId);
-            openaiWs.send(JSON.stringify({
-              type: 'input_audio_buffer.clear'
-            }));
-          } else {
-            clearInterval(keepAliveInterval);
-          }
-        }, 20000); // Every 20 seconds
-        
-        openaiWs.keepAliveInterval = keepAliveInterval;
-        
-        resolve(); // Connection is ready!
+          }));
+          console.log('✅ Config sent');
+          
+          // CRITICAL: Store connection
+          console.log('💾 STORING CONNECTION for:', sessionId);
+          openaiConnections.set(sessionId, openaiWs);
+          console.log('✅ CONNECTION STORED!');
+          console.log('📊 Total connections:', openaiConnections.size);
+          console.log('📊 All sessions:', Array.from(openaiConnections.keys()));
+          
+          // Keep-alive
+          const keepAliveInterval = setInterval(() => {
+            if (openaiWs.readyState === WebSocket.OPEN) {
+              console.log('💓 Keep-alive:', sessionId);
+              try {
+                openaiWs.send(JSON.stringify({
+                  type: 'input_audio_buffer.clear'
+                }));
+              } catch (err) {
+                console.error('Keep-alive error:', err.message);
+                clearInterval(keepAliveInterval);
+              }
+            } else {
+              console.log('🔴 Connection not open, stopping keep-alive');
+              clearInterval(keepAliveInterval);
+            }
+          }, 20000);
+          
+          openaiWs.keepAliveInterval = keepAliveInterval;
+          console.log('✅ Keep-alive started');
+          
+          resolve(); // All done!
+          
+        } catch (err) {
+          console.error('❌ Error in open handler:', err);
+          reject(err);
+        }
       });
       
+      // SETUP 2: Error handler (before open)
       openaiWs.on('error', (error) => {
         clearTimeout(timeout);
-        console.error('❌ Connection error:', error.message);
+        console.error('❌ WebSocket ERROR:', error.message);
+        
+        // Clean up
+        if (openaiWs.keepAliveInterval) {
+          clearInterval(openaiWs.keepAliveInterval);
+        }
+        openaiConnections.delete(sessionId);
+        audioResponses.delete(sessionId);
+        
         reject(error);
+      });
+      
+      // SETUP 3: Close handler (before open)
+      openaiWs.on('close', (code, reason) => {
+        console.log('🔴 CONNECTION CLOSED');
+        console.log('Session:', sessionId);
+        console.log('Code:', code);
+        console.log('Reason:', reason);
+        
+        // Clean up
+        if (openaiWs.keepAliveInterval) {
+          clearInterval(openaiWs.keepAliveInterval);
+        }
+        openaiConnections.delete(sessionId);
+        audioResponses.delete(sessionId);
+        
+        console.log('📊 Connections after close:', openaiConnections.size);
+      });
+      
+      // SETUP 4: Message handler (before open)
+      openaiWs.on('message', (data) => {
+        try {
+          const message = JSON.parse(data.toString());
+          
+          if (message.type === 'session.created') {
+            console.log('🎉 Session created!');
+          }
+          
+          if (message.type === 'response.audio.delta') {
+            if (!audioResponses.has(sessionId)) {
+              audioResponses.set(sessionId, []);
+            }
+            audioResponses.get(sessionId).push(message.delta);
+          }
+          
+          if (message.type !== 'response.audio.delta') {
+            pusher.trigger(`session-${sessionId}`, 'openai-message', message).catch(() => {});
+          }
+        } catch (err) {
+          console.error('Message parse error:', err.message);
+        }
       });
     });
     
-    // Set up message handlers AFTER connection is established
-    openaiWs.on('message', (data) => {
-      try {
-        const message = JSON.parse(data.toString());
-        
-        if (message.type === 'response.audio.delta') {
-          if (!audioResponses.has(sessionId)) {
-            audioResponses.set(sessionId, []);
-          }
-          audioResponses.get(sessionId).push(message.delta);
-        }
-        
-        if (message.type !== 'response.audio.delta') {
-          pusher.trigger(`session-${sessionId}`, 'openai-message', message).catch(() => {});
-        }
-      } catch (error) {
-        console.error('Message parse error:', error.message);
-      }
-    });
+    // Connection is ready, respond to client
+    console.log('======================');
+    console.log('✅ CONNECT SUCCESS');
+    console.log('Final connection count:', openaiConnections.size);
+    console.log('Final sessions:', Array.from(openaiConnections.keys()));
+    console.log('======================');
     
-    openaiWs.on('close', () => {
-      console.log('🔴 Connection closed:', sessionId);
-      if (openaiWs.keepAliveInterval) {
-        clearInterval(openaiWs.keepAliveInterval);
-      }
-      openaiConnections.delete(sessionId);
-      audioResponses.delete(sessionId);
-    });
-    
-    openaiWs.on('error', (error) => {
-      console.error('OpenAI error:', error.message);
-      if (openaiWs.keepAliveInterval) {
-        clearInterval(openaiWs.keepAliveInterval);
-      }
-    });
-    
-    // NOW respond - connection is ready!
     res.json({ success: true, sessionId });
-    console.log('✅ Response sent - connection ready');
     
   } catch (error) {
-    console.error('❌ Connect failed:', error.message);
+    console.error('======================');
+    console.error('❌ CONNECT FAILED');
+    console.error('Error:', error.message);
+    console.error('======================');
     res.status(500).json({ error: error.message });
   }
 });
