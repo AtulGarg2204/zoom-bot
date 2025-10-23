@@ -29,16 +29,7 @@
         const statusLabel = document.getElementById('statusLabel');
         const statusUrl = document.getElementById('statusUrl');
 
-       // CRITICAL: Get session ID from URL parameter (passed by n8n)
-let sessionId = params.get('sessionId');
-
-// Fallback: generate one if not provided (for local testing)
-if (!sessionId) {
-    sessionId = 'session-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
-    console.warn('⚠️ No sessionId in URL, generated:', sessionId);
-} else {
-    console.log('✅ Using sessionId from URL:', sessionId);
-}
+        const sessionId = 'session-' + Math.random().toString(36).substr(2, 9);
 
         function updateStatus(status, message) {
             statusDot.className = 'status-dot ' + status;
