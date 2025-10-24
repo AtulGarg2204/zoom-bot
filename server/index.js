@@ -298,15 +298,12 @@ const pusher = new Pusher({
 
 console.log('🔧 Pusher initialized with cluster:', process.env.PUSHER_CLUSTER);
 
+// Middleware
 app.use(cors({
-  origin: ['https://zoom-bot-jet.vercel.app', 'http://localhost:3000', 'http://127.0.0.1:3000', '*'],
+  origin: '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Origin', 'X-Requested-With', 'Content-Type', 'Accept', 'Authorization'],
-  credentials: true
 }));
-
-// Handle preflight requests
-app.options('*', cors());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
