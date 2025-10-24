@@ -7,6 +7,7 @@
     "dev": "node index.js"
   },
   "dependencies": {
+    "@deepgram/sdk": "^4.11.2",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
     "express": "^4.21.2",
