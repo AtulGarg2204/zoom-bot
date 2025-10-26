@@ -550,125 +550,318 @@
 </html> -->
 
 
-
 <!DOCTYPE html>
 <html>
 <head>
     <title>AI Voice Assistant</title>
-    <link rel="stylesheet" href="styles.css">
-    <script src="https://js.pusher.com/8.2.0/pusher.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        .container {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            max-width: 700px;
+            width: 100%;
+        }
+        .status-section {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .status-dot {
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            margin: 0 auto 20px;
+            animation: pulse 2s infinite;
+        }
+        .status-dot.connecting { background: #ffc107; }
+        .status-dot.connected { background: #28a745; }
+        .status-dot.disconnected { background: #dc3545; animation: none; }
+        .status-label {
+            font-weight: 600;
+            font-size: 24px;
+            color: #333;
+            margin-bottom: 10px;
+        }
+        .status-info {
+            font-size: 14px;
+            color: #666;
+        }
+        .notification {
+            background: #4caf50;
+            color: white;
+            padding: 12px 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            text-align: center;
+            font-size: 14px;
+            font-weight: 500;
+            display: none;
+            animation: slideIn 0.3s ease;
+        }
+        .notification.show {
+            display: block;
+        }
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .chat-section {
+            margin-top: 20px;
+        }
+        .chat-box {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 15px;
+            min-height: 100px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        .chat-box h3 {
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #667eea;
+            margin-bottom: 10px;
+        }
+        .chat-content {
+            font-size: 16px;
+            color: #333;
+            line-height: 1.6;
+        }
+        .user-transcript {
+            background: #e3f2fd;
+            padding: 10px 15px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+        }
+        .ai-response {
+            background: #f3e5f5;
+            padding: 10px 15px;
+            border-radius: 8px;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.7; transform: scale(1.1); }
+        }
+        .empty-state {
+            color: #999;
+            font-style: italic;
+            font-size: 14px;
+        }
+    </style>
 </head>
 <body>
     <div class="container">
-        <div class="status-indicator">
+        <div class="status-section">
             <div class="status-dot" id="statusDot"></div>
-            <div class="status-text">
-                <div class="status-label" id="statusLabel">Connecting...</div>
-                <div class="status-url" id="statusUrl"></div>
+            <div class="status-label" id="statusLabel">Connecting...</div>
+            <div class="status-info" id="statusInfo">Loading...</div>
+        </div>
+
+        <div class="notification" id="notification">
+            🔊 Received audio from Deepgram
+        </div>
+
+        <div class="chat-section">
+            <div class="chat-box">
+                <h3>Your Transcript</h3>
+                <div class="chat-content" id="transcriptContent">
+                    <div class="empty-state">Speak to start...</div>
+                </div>
+            </div>
+
+            <div class="chat-box">
+                <h3>AI Response</h3>
+                <div class="chat-content" id="responseContent">
+                    <div class="empty-state">Waiting for response...</div>
+                </div>
             </div>
         </div>
     </div>
 
+    <script src="https://js.pusher.com/8.2.0/pusher.min.js"></script>
     <script>
-        // Get server URL from query parameters
         const params = new URLSearchParams(window.location.search);
-         const SERVER_URL = params.get('server') || 'https://zoom-bot-zkf2.vercel.app';
+        const SERVER_URL = params.get('server') || 'https://zoom-bot-zkf2.vercel.app';
+        // const SERVER_URL = params.get('server') || 'http://localhost:3000';
         const PUSHER_KEY = params.get('pusher_key') || '53efc497795d6002deb2';
         const PUSHER_CLUSTER = params.get('pusher_cluster') || 'ap2';
         
         const statusDot = document.getElementById('statusDot');
         const statusLabel = document.getElementById('statusLabel');
-        const statusUrl = document.getElementById('statusUrl');
-
+        const statusInfo = document.getElementById('statusInfo');
+        const transcriptContent = document.getElementById('transcriptContent');
+        const responseContent = document.getElementById('responseContent');
+        const notification = document.getElementById('notification');
         const sessionId = 'session-' + Math.random().toString(36).substr(2, 9);
+
+        console.log('🆔 Session ID:', sessionId);
+        console.log('🌐 Server:', SERVER_URL);
 
         function updateStatus(status, message) {
             statusDot.className = 'status-dot ' + status;
             statusLabel.textContent = message;
-            statusUrl.textContent = SERVER_URL;
+        }
+
+        function showTranscript(text) {
+            console.log('📝 Showing transcript:', text);
+            transcriptContent.innerHTML = `<div class="user-transcript">${text}</div>`;
+        }
+
+        function showResponse(text) {
+            console.log('🤖 Showing AI response:', text);
+            responseContent.innerHTML = `<div class="ai-response">${text}</div>`;
+        }
+
+        function showNotification(message) {
+            console.log('🔔 Notification:', message);
+            notification.textContent = message;
+            notification.classList.add('show');
+            setTimeout(() => {
+                notification.classList.remove('show');
+            }, 3000);
+        }
+
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)({ 
+            sampleRate: 24000,
+            latencyHint: 'interactive'
+        });
+        
+        document.addEventListener('click', () => {
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+        }, { once: true });
+
+        function base64ToAudioBuffer(base64Audio) {
+            const binaryString = atob(base64Audio);
+            const len = binaryString.length;
+            const bytes = new Uint8Array(len);
+            
+            for (let i = 0; i < len; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+            }
+            
+            const int16Array = new Int16Array(bytes.buffer);
+            const float32Array = new Float32Array(int16Array.length);
+            const scale = 1 / 32768;
+            
+            for (let i = 0; i < int16Array.length; i++) {
+                float32Array[i] = int16Array[i] * scale;
+            }
+            
+            return float32Array;
+        }
+
+        async function playAudioImmediate(base64Audio, t0) {
+            try {
+                if (audioCtx.state === 'suspended') {
+                    await audioCtx.resume();
+                }
+                
+                const float32Array = base64ToAudioBuffer(base64Audio);
+                const audioBuffer = audioCtx.createBuffer(1, float32Array.length, 24000);
+                audioBuffer.getChannelData(0).set(float32Array);
+                
+                const source = audioCtx.createBufferSource();
+                source.buffer = audioBuffer;
+                source.connect(audioCtx.destination);
+                source.start(0);
+                
+                const t_play = Date.now();
+                const y = t_play - t0;
+                
+                console.log(`[${y}ms] ⚡ BROWSER STARTS PLAYING (T=Y)`);
+                console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
+                
+            } catch (error) {
+                console.error('PLAYBACK ERROR:', error);
+            }
         }
 
         async function connectToServer() {
             try {
-                console.log('🔵 Starting connection...');
-                console.log('📍 Server URL:', SERVER_URL);
-                console.log('🔑 Pusher Key:', PUSHER_KEY);
-                console.log('🌍 Pusher Cluster:', PUSHER_CLUSTER);
-                console.log('🆔 Session ID:', sessionId);
-                
-                updateStatus('connecting', 'Connecting to AI...');
+                updateStatus('connecting', 'Connecting...');
                 
                 // Initialize Pusher
                 console.log('📡 Initializing Pusher...');
                 const pusher = new Pusher(PUSHER_KEY, {
-                    cluster: PUSHER_CLUSTER
+                    cluster: PUSHER_CLUSTER,
+                    forceTLS: true
                 });
                 
-                // Subscribe to session channel
                 const channelName = `session-${sessionId}`;
                 console.log('📺 Subscribing to channel:', channelName);
                 const channel = pusher.subscribe(channelName);
                 
                 channel.bind('pusher:subscription_succeeded', () => {
-                    console.log('✅ Successfully subscribed to Pusher channel');
+                    console.log('✅ Pusher subscription successful');
                 });
                 
-                channel.bind('pusher:subscription_error', (error) => {
-                    console.error('❌ Pusher subscription error:', error);
+                // Listen for transcript
+                channel.bind('transcript', (data) => {
+                    console.log('📥 Received transcript event:', data);
+                    if (data.text) {
+                        showTranscript(data.text);
+                    }
                 });
                 
-                // Listen for OpenAI messages (non-audio)
-                channel.bind('openai-message', (message) => {
-                    console.log('📨 Received from OpenAI via Pusher:', message.type);
-                    
-                    if (message.type === 'session.created') {
-                        console.log('✅ Session created - updating status');
-                        updateStatus('connected', 'Connected to AI');
+                // Listen for AI response
+                channel.bind('ai-response', (data) => {
+                    console.log('📥 Received AI response event:', data);
+                    if (data.text) {
+                        showResponse(data.text);
                     }
-                    
-                    if (message.type === 'input_audio_buffer.speech_started') {
-                        console.log('🎤 Speech detected by AI');
-                    }
+                });
+                
+                // Listen for audio
+                channel.bind('audio-received', (data) => {
+                    console.log('📥 Received audio-received event:', data);
+                    showNotification('🔊 Received audio from Deepgram');
                 });
                 
                 // Connect to backend
-                console.log('🔌 Connecting to backend API...');
                 const response = await fetch(`${SERVER_URL}/api/connect`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ sessionId })
                 });
                 
-                console.log('📥 Backend response status:', response.status);
+                if (!response.ok) throw new Error('Connection failed');
                 
-                if (!response.ok) {
-                    const error = await response.json();
-                    console.error('❌ Backend connection failed:', error);
-                    throw new Error('Connection failed');
-                }
+                console.log('✅ Connected to server');
+                updateStatus('connected', 'Ready');
+                statusInfo.textContent = 'Speak now';
                 
-                const result = await response.json();
-                console.log('✅ Backend connected:', result);
-                
-                // Poll for audio responses
+                // Poll for audio
                 setInterval(async () => {
                     try {
                         const audioResponse = await fetch(`${SERVER_URL}/api/get-audio/${sessionId}`);
                         const data = await audioResponse.json();
                         
-                        if (data.audio && data.audio.length > 0) {
-                            console.log('🔊 Received', data.audio.length, 'audio chunks');
-                            data.audio.forEach(chunk => {
-                                playAudio(chunk);
-                            });
+                        if (data.audio && data.audio.length > 0 && data.t0) {
+                            for (const chunk of data.audio) {
+                                await playAudioImmediate(chunk, data.t0);
+                            }
                         }
                     } catch (error) {
-                        console.error('❌ Error polling audio:', error);
+                        // Silent
                     }
-                }, 100); // Poll every 100ms
+                }, 100);
                 
-                // Start capturing audio
-                console.log('🎤 Requesting microphone access...');
+                // Get microphone
                 const stream = await navigator.mediaDevices.getUserMedia({ 
                     audio: {
                         channelCount: 1,
@@ -677,37 +870,20 @@
                         noiseSuppression: true
                     }
                 });
-                console.log('✅ Microphone access granted');
                 
-                const audioContext = new AudioContext({ sampleRate: 24000 });
-                console.log('🎵 Audio context created, sample rate:', audioContext.sampleRate);
-                
-                const source = audioContext.createMediaStreamSource(stream);
-                
-                // Use ScriptProcessorNode (simpler, more reliable)
-                const bufferSize = 4096;
-                const processor = audioContext.createScriptProcessor(bufferSize, 1, 1);
-                
-                let audioChunkCount = 0;
+                const captureContext = new AudioContext({ sampleRate: 24000 });
+                const source = captureContext.createMediaStreamSource(stream);
+                const processor = captureContext.createScriptProcessor(4096, 1, 1);
                 
                 processor.onaudioprocess = async (event) => {
-                    audioChunkCount++;
-                    
                     const inputData = event.inputBuffer.getChannelData(0);
-                    
-                    // Convert float32 to int16
                     const int16Data = new Int16Array(inputData.length);
+                    
                     for (let i = 0; i < inputData.length; i++) {
                         const s = Math.max(-1, Math.min(1, inputData[i]));
                         int16Data[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
                     }
                     
-                    // Log every 10 chunks
-                    if (audioChunkCount % 10 === 0) {
-                        console.log(`🎤 Captured audio chunk #${audioChunkCount}, samples:`, int16Data.length);
-                    }
-                    
-                    // Convert to base64
                     const uint8Data = new Uint8Array(int16Data.buffer);
                     let binary = '';
                     for (let i = 0; i < uint8Data.length; i++) {
@@ -715,94 +891,24 @@
                     }
                     const base64Audio = btoa(binary);
                     
-                    if (audioChunkCount % 10 === 0) {
-                        console.log(`📤 Sending audio chunk #${audioChunkCount}, base64 length:`, base64Audio.length);
-                    }
-                    
                     try {
-                        const audioResponse = await fetch(`${SERVER_URL}/api/send-audio`, {
+                        await fetch(`${SERVER_URL}/api/send-audio`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ 
-                                sessionId, 
-                                audio: base64Audio 
-                            })
+                            body: JSON.stringify({ sessionId, audio: base64Audio })
                         });
-                        
-                        if (!audioResponse.ok) {
-                            const error = await audioResponse.json();
-                            console.error('❌ Send audio failed:', error);
-                        }
                     } catch (error) {
-                        console.error('❌ Error sending audio:', error);
+                        // Silent
                     }
                 };
                 
                 source.connect(processor);
-                processor.connect(audioContext.destination);
-                
-                console.log('✅ Audio capture started - speak now!');
+                processor.connect(captureContext.destination);
                 
             } catch (error) {
-                console.error('❌ Connection error:', error);
-                updateStatus('disconnected', 'Error: ' + error.message);
-            }
-        }
-
-        // Audio playback
-        const audioCtx = new AudioContext({ sampleRate: 24000 });
-        const audioQueue = [];
-        let isPlaying = false;
-
-        function playAudio(base64Audio) {
-            console.log('🎵 Queueing audio, base64 length:', base64Audio.length);
-            audioQueue.push(base64Audio);
-            
-            if (!isPlaying) {
-                processAudioQueue();
-            }
-        }
-
-        async function processAudioQueue() {
-            if (audioQueue.length === 0) {
-                isPlaying = false;
-                return;
-            }
-            
-            isPlaying = true;
-            const base64Audio = audioQueue.shift();
-            
-            try {
-                // Decode base64 to binary
-                const binaryString = atob(base64Audio);
-                const bytes = new Uint8Array(binaryString.length);
-                for (let i = 0; i < binaryString.length; i++) {
-                    bytes[i] = binaryString.charCodeAt(i);
-                }
-                
-                // Convert PCM16 to Float32
-                const int16Array = new Int16Array(bytes.buffer);
-                const float32Array = new Float32Array(int16Array.length);
-                for (let i = 0; i < int16Array.length; i++) {
-                    float32Array[i] = int16Array[i] / 32768.0;
-                }
-                
-                console.log('🔊 Playing audio, samples:', float32Array.length);
-                
-                // Create audio buffer
-                const audioBuffer = audioCtx.createBuffer(1, float32Array.length, 24000);
-                audioBuffer.getChannelData(0).set(float32Array);
-                
-                // Play
-                const source = audioCtx.createBufferSource();
-                source.buffer = audioBuffer;
-                source.connect(audioCtx.destination);
-                source.onended = processAudioQueue;
-                source.start();
-                
-            } catch (error) {
-                console.error('❌ Error playing audio:', error);
-                processAudioQueue(); // Continue with next chunk
+                console.error('ERROR:', error);
+                updateStatus('disconnected', 'Error');
+                statusInfo.textContent = error.message;
             }
         }
 

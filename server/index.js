@@ -935,7 +935,6 @@
 
 // // Export the Express app for Vercel
 // module.exports = app;
-
 const express = require('express');
 const cors = require('cors');
 const Pusher = require('pusher');
@@ -945,7 +944,6 @@ const { createClient } = require('@deepgram/sdk');
 
 const app = express();
 
-// Initialize Pusher
 const pusher = new Pusher({
   appId: process.env.PUSHER_APP_ID,
   key: process.env.PUSHER_KEY,
@@ -954,40 +952,44 @@ const pusher = new Pusher({
   useTLS: true
 });
 
-console.log('🔧 Pusher initialized with cluster:', process.env.PUSHER_CLUSTER);
+console.log('🔧 Pusher initialized');
 
-// Middleware
+// CORS
 app.use(cors({
   origin: '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Origin', 'X-Requested-With', 'Content-Type', 'Accept', 'Authorization'],
 }));
+
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-console.log('🔑 OpenAI API Key present:', !!OPENAI_API_KEY);
-
 const DEEPGRAM_API_KEY = process.env.DEEPGRAM_API_KEY;
+
+console.log('🔑 OpenAI API Key present:', !!OPENAI_API_KEY);
 console.log('🔑 Deepgram API Key present:', !!DEEPGRAM_API_KEY);
 
-// Initialize Deepgram client
 const deepgram = createClient(DEEPGRAM_API_KEY);
 console.log('🎙️ Deepgram client initialized');
 
-// Store active Deepgram connections
 const deepgramConnections = new Map();
-// Store transcripts per session
-const transcripts = new Map();
-// Store audio responses per session
 const audioResponses = new Map();
+const conversationHistory = new Map();
 
-// Function to process transcript with LLM
-async function processWithLLM(sessionId, userMessage) {
+async function processWithLLM(sessionId, userMessage, t0) {
   try {
-    console.log('🤖 Processing with LLM:', userMessage);
+    if (!conversationHistory.has(sessionId)) {
+      conversationHistory.set(sessionId, []);
+    }
+    const history = conversationHistory.get(sessionId);
     
-    // Call OpenAI API
+    history.push({ role: 'user', content: userMessage });
+    if (history.length > 8) history.splice(0, 2);
+    
+    const t_llm_start = Date.now();
+    console.log(`[${t_llm_start - t0}ms] LLM START`);
+    
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -999,100 +1001,108 @@ async function processWithLLM(sessionId, userMessage) {
         messages: [
           {
             role: 'system',
-            content: 'You are a helpful AI meeting assistant. Be concise, friendly, and natural in conversation. Keep responses under 3 sentences.'
+            content: 'Reply in 1 short sentence (8-12 words). Be natural and conversational.'
           },
-          {
-            role: 'user',
-            content: userMessage
-          }
+          ...history
         ],
-        max_tokens: 150,
-        temperature: 0.7
+        max_tokens: 30,
+        temperature: 0.7,
+        stream: false
       })
     });
     
     const data = await response.json();
-    const aiResponse = data.choices[0].message.content;
+    const fullResponse = data.choices[0].message.content.trim();
     
-    console.log('🤖 LLM Response:', aiResponse);
+    const t_llm_end = Date.now();
+    console.log(`[${t_llm_end - t0}ms] LLM END: "${fullResponse}"`);
     
-    // Send response via Pusher
+    // Send AI response to frontend via Pusher
     const channel = `session-${sessionId}`;
-    pusher.trigger(channel, 'llm-response', {
-      text: aiResponse
-    }).catch(err => {
-      console.error('❌ Pusher error:', err.message);
-    });
     
-    // Now convert to speech with Deepgram TTS
-    await convertToSpeech(sessionId, aiResponse);
+    try {
+      await pusher.trigger(channel, 'ai-response', {
+        text: fullResponse
+      });
+      console.log(`✅ AI response sent via Pusher`);
+    } catch (err) {
+      console.error('❌ Pusher error:', err);
+    }
+    
+    history.push({ role: 'assistant', content: fullResponse });
+    
+    await convertToSpeech(sessionId, fullResponse, t0);
     
   } catch (error) {
-    console.error('❌ Error processing with LLM:', error);
+    console.error('LLM ERROR:', error.message);
   }
 }
 
-// Function to convert text to speech using Deepgram TTS
-async function convertToSpeech(sessionId, text) {
+async function convertToSpeech(sessionId, text, t0) {
   try {
-    console.log('🔊 Converting to speech:', text);
+    const t_tts_start = Date.now();
+    console.log(`[${t_tts_start - t0}ms] TTS START`);
     
-    // Call Deepgram TTS API
     const response = await deepgram.speak.request(
       { text },
       {
         model: 'aura-asteria-en',
         encoding: 'linear16',
-        sample_rate: 24000
+        sample_rate: 24000,
+        container: 'none'
       }
     );
     
-    // Get audio stream
     const stream = await response.getStream();
     const audioChunks = [];
     
-    // Collect audio chunks
     for await (const chunk of stream) {
       audioChunks.push(chunk);
     }
     
-    // Combine all chunks
     const audioBuffer = Buffer.concat(audioChunks);
     const base64Audio = audioBuffer.toString('base64');
     
-    console.log('✅ Audio generated, size:', audioBuffer.length);
+    const t_tts_end = Date.now();
+    console.log(`[${t_tts_end - t0}ms] TTS END`);
     
-    // Store audio for client to retrieve
+    // Send notification that audio was received
+    const channel = `session-${sessionId}`;
+    
+    try {
+      await pusher.trigger(channel, 'audio-received', {
+        message: 'Received audio from Deepgram',
+        timestamp: Date.now()
+      });
+      console.log(`✅ Audio-received notification sent`);
+    } catch (err) {
+      console.error('❌ Pusher error:', err);
+    }
+    
     if (!audioResponses.has(sessionId)) {
       audioResponses.set(sessionId, []);
     }
-    audioResponses.get(sessionId).push(base64Audio);
-    
-    console.log('💾 Audio stored for session:', sessionId);
+    audioResponses.get(sessionId).push({ audio: base64Audio, t0: t0 });
     
   } catch (error) {
-    console.error('❌ Error converting to speech:', error);
+    console.error('TTS ERROR:', error.message);
   }
 }
 
-// Routes
 app.get('/', (req, res) => {
-  console.log('📍 Root endpoint hit');
   res.json({ 
-    message: 'Zoom Voice Bot API with Deepgram',
+    message: 'Zoom Voice Bot', 
     status: 'running',
     endpoints: {
       health: '/api/health',
       connect: '/api/connect',
       sendAudio: '/api/send-audio',
-      getAudio: '/api/get-audio/:sessionId',
-      getTranscript: '/api/get-transcript/:sessionId'
+      getAudio: '/api/get-audio/:sessionId'
     }
   });
 });
 
 app.get('/api/health', (req, res) => {
-  console.log('📍 Health check endpoint hit');
   res.json({ 
     status: 'ok', 
     connections: deepgramConnections.size,
@@ -1100,23 +1110,18 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// Endpoint to initiate connection with Deepgram
 app.post('/api/connect', async (req, res) => {
   const { sessionId } = req.body;
   
-  console.log('\n🔵 === CONNECT REQUEST ===');
-  console.log('📦 Request body:', req.body);
-  console.log('🆔 Session ID:', sessionId);
+  console.log('\n🔵 CONNECT:', sessionId);
   
   if (!sessionId) {
-    console.log('❌ No sessionId provided');
-    return res.status(400).json({ error: 'sessionId is required' });
+    return res.status(400).json({ error: 'sessionId required' });
   }
   
   try {
-    console.log('🔌 Attempting to connect to Deepgram STT...');
+    console.log('🔌 Connecting to Deepgram STT...');
     
-    // Create Deepgram live transcription connection
     const dgConnection = deepgram.listen.live({
       model: 'nova-2',
       language: 'en',
@@ -1129,187 +1134,143 @@ app.post('/api/connect', async (req, res) => {
       channels: 1
     });
     
-    // Handle connection open
+    let lastTranscript = '';
+    let processingTimer = null;
+    let lastProcessedTranscript = '';
+    let t0 = null;
+    
     dgConnection.on('open', () => {
-      console.log('✅ Connected to Deepgram STT for session:', sessionId);
+      console.log(`✅ Connected: ${sessionId}`);
       deepgramConnections.set(sessionId, dgConnection);
-      console.log('💾 Stored Deepgram connection for session:', sessionId);
-      console.log('📊 Total active connections:', deepgramConnections.size);
+      console.log('📊 Total connections:', deepgramConnections.size);
     });
     
-    // Handle transcription results
     dgConnection.on('Results', (data) => {
       const transcript = data.channel.alternatives[0].transcript;
       
       if (transcript && transcript.length > 0) {
-        console.log('📝 Transcript:', transcript);
-        console.log('🎯 Is final:', data.is_final);
+        lastTranscript = transcript;
         
-        // Store transcript
-        if (!transcripts.has(sessionId)) {
-          transcripts.set(sessionId, []);
-        }
-        
-        transcripts.get(sessionId).push({
-          text: transcript,
-          is_final: data.is_final,
-          timestamp: new Date().toISOString()
-        });
-        
-        // Send transcript via Pusher
+        // Send interim transcripts to frontend
         const channel = `session-${sessionId}`;
-        pusher.trigger(channel, 'transcript', {
+        pusher.trigger(channel, 'transcript-interim', {
           text: transcript,
           is_final: data.is_final
-        }).catch(err => {
-          console.error('❌ Pusher error:', err.message);
-        });
+        }).catch(err => console.error('Pusher error:', err));
         
-        // If final transcript, send to LLM
+        if (processingTimer) {
+          clearTimeout(processingTimer);
+        }
+        
+        // Only process final transcripts
         if (data.is_final) {
-          console.log('✅ Final transcript received, sending to LLM...');
-          processWithLLM(sessionId, transcript);
+          processingTimer = setTimeout(() => {
+            if (lastTranscript && lastTranscript !== lastProcessedTranscript) {
+              t0 = Date.now();
+              
+              console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+              console.log(`[T=0] USER STOPPED SPEAKING`);
+              console.log(`Transcript: "${lastTranscript}"`);
+              
+              const t_stt_end = Date.now();
+              console.log(`[${t_stt_end - t0}ms] STT END`);
+              
+              // Send final transcript to frontend
+              pusher.trigger(channel, 'transcript', {
+                text: lastTranscript
+              }).then(() => {
+                console.log(`✅ Transcript sent via Pusher`);
+              }).catch(err => {
+                console.error('❌ Pusher error:', err);
+              });
+              
+              lastProcessedTranscript = lastTranscript;
+              processWithLLM(sessionId, lastTranscript, t0);
+            }
+          }, 500);
         }
       }
     });
     
-    // Handle metadata
-    dgConnection.on('Metadata', (data) => {
-      console.log('📊 Deepgram metadata received');
-    });
-    
-    // Handle errors
     dgConnection.on('error', (error) => {
-      console.error('❌ Deepgram error:', error);
+      console.error('STT ERROR:', error.message);
     });
     
-    // Handle close
     dgConnection.on('close', () => {
-      console.log('🔴 Deepgram disconnected for session:', sessionId);
+      console.log(`🔴 Disconnected: ${sessionId}`);
       deepgramConnections.delete(sessionId);
-      transcripts.delete(sessionId);
+      conversationHistory.delete(sessionId);
+      if (processingTimer) clearTimeout(processingTimer);
     });
     
     res.json({ success: true, sessionId, service: 'deepgram' });
     console.log('✅ Connect response sent');
     
   } catch (error) {
-    console.error('❌ Connection error:', error);
+    console.error('CONNECT ERROR:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
-// Endpoint to send audio to Deepgram
 app.post('/api/send-audio', async (req, res) => {
   const { sessionId, audio } = req.body;
   
-  console.log('\n🔵 === SEND AUDIO REQUEST ===');
-  console.log('🆔 Session ID:', sessionId);
-  console.log('🎵 Audio data length:', audio ? audio.length : 0);
-  
   if (!sessionId || !audio) {
-    console.log('❌ Missing required fields');
-    return res.status(400).json({ error: 'sessionId and audio are required' });
+    return res.status(400).json({ error: 'Missing data' });
   }
   
   const dgConnection = deepgramConnections.get(sessionId);
   
   if (!dgConnection) {
-    console.log('❌ No Deepgram connection found for session:', sessionId);
+    console.log('❌ No connection for session:', sessionId);
     console.log('📊 Active sessions:', Array.from(deepgramConnections.keys()));
-    return res.status(400).json({ error: 'No active connection for this session' });
+    return res.status(400).json({ error: 'No active connection' });
   }
   
   try {
-    // Decode base64 audio to buffer
     const audioBuffer = Buffer.from(audio, 'base64');
-    
-    console.log('📤 Sending audio to Deepgram... Buffer size:', audioBuffer.length);
-    
-    // Send audio to Deepgram
     dgConnection.send(audioBuffer);
-    
-    console.log('✅ Audio sent to Deepgram successfully');
-    
     res.json({ success: true });
   } catch (error) {
-    console.error('❌ Error sending audio to Deepgram:', error);
-    res.status(500).json({ error: 'Failed to send audio' });
+    console.error('❌ Send audio error:', error);
+    res.status(500).json({ error: 'Send failed' });
   }
 });
 
-// Endpoint to get transcripts
-app.get('/api/get-transcript/:sessionId', (req, res) => {
-  const { sessionId } = req.params;
-  
-  console.log('🔵 === GET TRANSCRIPT REQUEST ===');
-  console.log('🆔 Session ID:', sessionId);
-  
-  const sessionTranscripts = transcripts.get(sessionId) || [];
-  
-  if (sessionTranscripts.length > 0) {
-    console.log('✅ Returning', sessionTranscripts.length, 'transcripts');
-    const texts = [...sessionTranscripts];
-    transcripts.set(sessionId, []); // Clear after getting
-    res.json({ transcripts: texts });
-  } else {
-    res.json({ transcripts: [] });
-  }
-});
-
-// Endpoint to get audio responses
 app.get('/api/get-audio/:sessionId', (req, res) => {
   const { sessionId } = req.params;
+  const audioData = audioResponses.get(sessionId) || [];
   
-  console.log('🔵 === GET AUDIO REQUEST ===');
-  console.log('🆔 Session ID:', sessionId);
-  
-  const audioChunks = audioResponses.get(sessionId) || [];
-  
-  if (audioChunks.length > 0) {
-    console.log('✅ Returning', audioChunks.length, 'audio chunks');
-    const chunks = [...audioChunks];
-    audioResponses.set(sessionId, []); // Clear after getting
-    res.json({ audio: chunks });
+  if (audioData.length > 0) {
+    const data = [...audioData];
+    audioResponses.set(sessionId, []);
+    res.json({ 
+      audio: data.map(d => d.audio),
+      t0: data[0].t0
+    });
   } else {
     res.json({ audio: [] });
   }
 });
 
-// Error handling middleware
 app.use((error, req, res, next) => {
-  console.error('❌ Server Error:', error);
-  
-  res.status(500).json({ 
-    error: 'Internal server error',
-    ...(process.env.NODE_ENV === 'development' && { details: error.message })
-  });
+  console.error('SERVER ERROR:', error.message);
+  res.status(500).json({ error: 'Server error' });
 });
 
-// 404 handler
 app.use((req, res) => {
-  console.log('❌ 404 - Route not found:', req.path);
-  res.status(404).json({ error: 'Route not found' });
+  res.status(404).json({ error: 'Not found' });
 });
 
-// For local development
 const startServer = async () => {
   const PORT = process.env.PORT || 3000;
   app.listen(PORT, () => {
-    console.log('\n🚀🚀🚀 SERVER STARTED 🚀🚀🚀');
-    console.log(`📡 Pusher Channels ready for real-time updates`);
-    console.log(`🎙️ Deepgram STT ready`);
-    console.log(`🔊 Deepgram TTS ready`);
-    console.log(`🤖 OpenAI LLM ready`);
-    console.log(`🌐 API available at: http://localhost:${PORT}`);
-    console.log(`🎯 Environment: ${process.env.NODE_ENV || 'development'}\n`);
+    console.log(`\n⚡ Server running on http://localhost:${PORT}\n`);
   });
 };
 
-// Only start server if not in a serverless environment
 if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
   startServer();
 }
 
-// Export the Express app for Vercel
 module.exports = app;
