@@ -703,7 +703,8 @@
     <script src="https://js.pusher.com/8.2.0/pusher.min.js"></script>
     <script>
         const params = new URLSearchParams(window.location.search);
-        const SERVER_URL = params.get('server') || 'http://localhost:3000';
+        // const SERVER_URL = params.get('server') || 'http://localhost:3000';
+         const SERVER_URL = params.get('server') || 'https://zoom-bot-zkf2.vercel.app';
         const PUSHER_KEY = params.get('pusher_key') || '53efc497795d6002deb2';
         const PUSHER_CLUSTER = params.get('pusher_cluster') || 'ap2';
         
