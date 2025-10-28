@@ -811,28 +811,42 @@
                     console.log('✅ Pusher subscription successful');
                 });
                 
-                // Listen for transcript
-                channel.bind('transcript', (data) => {
-                    console.log('📥 Received transcript event:', data);
-                    if (data.text) {
-                        showTranscript(data.text);
-                    }
-                });
-                
-                // Listen for AI response
-                channel.bind('ai-response', (data) => {
-                    console.log('📥 Received AI response event:', data);
-                    if (data.text) {
-                        showResponse(data.text);
-                    }
-                });
-                
-                // Listen for audio
-                channel.bind('audio-received', (data) => {
-                    console.log('📥 Received audio-received event:', data);
-                    showNotification('🔊 Received audio from Deepgram');
-                });
-                
+           // Listen for interim transcripts (shows live updates)
+channel.bind('transcript-interim', (data) => {
+    console.log('📥 Received transcript-interim event:', data);
+    if (data.text) {
+        // Show interim in gray/italic style
+        if (data.is_final && data.speech_final) {
+            // Final transcript - bold style
+            showTranscript(data.text);
+        } else {
+            // Interim transcript - show in lighter style
+            transcriptContent.innerHTML = `<div class="user-transcript" style="opacity: 0.7; font-style: italic;">${data.text}</div>`;
+        }
+    }
+});
+
+// Listen for final transcript
+channel.bind('transcript', (data) => {
+    console.log('📥 Received final transcript event:', data);
+    if (data.text) {
+        showTranscript(data.text);
+    }
+});
+
+// Listen for AI response
+channel.bind('ai-response', (data) => {
+    console.log('📥 Received AI response event:', data);
+    if (data.text) {
+        showResponse(data.text);
+    }
+});
+
+// Listen for audio
+channel.bind('audio-received', (data) => {
+    console.log('📥 Received audio-received event:', data);
+    showNotification('🔊 Received audio from Deepgram');
+});
                 // Connect to backend
                 const response = await fetch(`${SERVER_URL}/api/connect`, {
                     method: 'POST',
