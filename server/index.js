@@ -5,10 +5,10 @@
 // const Pusher = require('pusher');
 // const WebSocket = require('ws');
 // require('dotenv').config();
+// const { createClient } = require('@deepgram/sdk');
 
 // const app = express();
 
-// // Initialize Pusher
 // const pusher = new Pusher({
 //   appId: process.env.PUSHER_APP_ID,
 //   key: process.env.PUSHER_KEY,
@@ -17,30 +17,146 @@
 //   useTLS: true
 // });
 
-// console.log('🔧 Pusher initialized with cluster:', process.env.PUSHER_CLUSTER);
+// console.log('🔧 Pusher initialized');
 
-// // Middleware
+// // CORS
 // app.use(cors({
 //   origin: '*',
 //   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
 //   allowedHeaders: ['Origin', 'X-Requested-With', 'Content-Type', 'Accept', 'Authorization'],
 // }));
+
 // app.use(express.json({ limit: '10mb' }));
 // app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+// const DEEPGRAM_API_KEY = process.env.DEEPGRAM_API_KEY;
+
 // console.log('🔑 OpenAI API Key present:', !!OPENAI_API_KEY);
+// console.log('🔑 Deepgram API Key present:', !!DEEPGRAM_API_KEY);
 
-// // Store active OpenAI connections
-// const openaiConnections = new Map();
-// // Store audio responses per session
+// const deepgram = createClient(DEEPGRAM_API_KEY);
+// console.log('🎙️ Deepgram client initialized');
+
+// const deepgramConnections = new Map();
 // const audioResponses = new Map();
+// const conversationHistory = new Map();
 
-// // Routes
+// async function processWithLLM(sessionId, userMessage, t0) {
+//   try {
+//     if (!conversationHistory.has(sessionId)) {
+//       conversationHistory.set(sessionId, []);
+//     }
+//     const history = conversationHistory.get(sessionId);
+    
+//     history.push({ role: 'user', content: userMessage });
+//     if (history.length > 8) history.splice(0, 2);
+    
+//     const t_llm_start = Date.now();
+//     console.log(`[${t_llm_start - t0}ms] LLM START`);
+    
+//     const response = await fetch('https://api.openai.com/v1/chat/completions', {
+//       method: 'POST',
+//       headers: {
+//         'Content-Type': 'application/json',
+//         'Authorization': `Bearer ${OPENAI_API_KEY}`
+//       },
+//       body: JSON.stringify({
+//         model: 'gpt-4o-mini',
+//         messages: [
+//           {
+//             role: 'system',
+//             content: 'Reply in 1 short sentence (8-12 words). Be natural and conversational.'
+//           },
+//           ...history
+//         ],
+//         max_tokens: 30,
+//         temperature: 0.7,
+//         stream: false
+//       })
+//     });
+    
+//     const data = await response.json();
+//     const fullResponse = data.choices[0].message.content.trim();
+    
+//     const t_llm_end = Date.now();
+//     console.log(`[${t_llm_end - t0}ms] LLM END: "${fullResponse}"`);
+    
+//     // Send AI response to frontend via Pusher
+//     const channel = `session-${sessionId}`;
+    
+//     try {
+//       await pusher.trigger(channel, 'ai-response', {
+//         text: fullResponse
+//       });
+//       console.log(`✅ AI response sent via Pusher`);
+//     } catch (err) {
+//       console.error('❌ Pusher error:', err);
+//     }
+    
+//     history.push({ role: 'assistant', content: fullResponse });
+    
+//     await convertToSpeech(sessionId, fullResponse, t0);
+    
+//   } catch (error) {
+//     console.error('LLM ERROR:', error.message);
+//   }
+// }
+
+// async function convertToSpeech(sessionId, text, t0) {
+//   try {
+//     const t_tts_start = Date.now();
+//     console.log(`[${t_tts_start - t0}ms] TTS START`);
+    
+//     const response = await deepgram.speak.request(
+//       { text },
+//       {
+//         model: 'aura-asteria-en',
+//         encoding: 'linear16',
+//         sample_rate: 24000,
+//         container: 'none'
+//       }
+//     );
+    
+//     const stream = await response.getStream();
+//     const audioChunks = [];
+    
+//     for await (const chunk of stream) {
+//       audioChunks.push(chunk);
+//     }
+    
+//     const audioBuffer = Buffer.concat(audioChunks);
+//     const base64Audio = audioBuffer.toString('base64');
+    
+//     const t_tts_end = Date.now();
+//     console.log(`[${t_tts_end - t0}ms] TTS END`);
+    
+//     // Send notification that audio was received
+//     const channel = `session-${sessionId}`;
+    
+//     try {
+//       await pusher.trigger(channel, 'audio-received', {
+//         message: 'Received audio from Deepgram',
+//         timestamp: Date.now()
+//       });
+//       console.log(`✅ Audio-received notification sent`);
+//     } catch (err) {
+//       console.error('❌ Pusher error:', err);
+//     }
+    
+//     if (!audioResponses.has(sessionId)) {
+//       audioResponses.set(sessionId, []);
+//     }
+//     audioResponses.get(sessionId).push({ audio: base64Audio, t0: t0 });
+    
+//   } catch (error) {
+//     console.error('TTS ERROR:', error.message);
+//   }
+// }
+
 // app.get('/', (req, res) => {
-//   console.log('📍 Root endpoint hit');
 //   res.json({ 
-//     message: 'Zoom Voice Bot API',
+//     message: 'Zoom Voice Bot', 
 //     status: 'running',
 //     endpoints: {
 //       health: '/api/health',
@@ -52,237 +168,222 @@
 // });
 
 // app.get('/api/health', (req, res) => {
-//   console.log('📍 Health check endpoint hit');
 //   res.json({ 
 //     status: 'ok', 
-//     connections: openaiConnections.size,
+//     connections: deepgramConnections.size,
 //     timestamp: new Date().toISOString()
 //   });
 // });
 
-// // Endpoint to initiate connection
 // app.post('/api/connect', async (req, res) => {
 //   const { sessionId } = req.body;
   
-//   console.log('\n🔵 === CONNECT REQUEST ===');
-//   console.log('📦 Request body:', req.body);
-//   console.log('🆔 Session ID:', sessionId);
+//   console.log('\n🔵 CONNECT:', sessionId);
   
 //   if (!sessionId) {
-//     console.log('❌ No sessionId provided');
-//     return res.status(400).json({ error: 'sessionId is required' });
+//     return res.status(400).json({ error: 'sessionId required' });
 //   }
   
 //   try {
-//     console.log('🔌 Attempting to connect to OpenAI...');
+//     console.log('🔌 Connecting to Deepgram STT...');
     
-//     // Connect to OpenAI Realtime API
-//     const openaiWs = new WebSocket(
-//       'wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-12-17',
-//       {
-//         headers: {
-//           'Authorization': `Bearer ${OPENAI_API_KEY}`,
-//           'OpenAI-Beta': 'realtime=v1'
-//         }
+//     const dgConnection = deepgram.listen.live({
+//   model: 'nova-3',
+//   language: 'en-US',
+//   smart_format: true,
+//   interim_results: true,
+//   utterance_end_ms: 1000,
+//   vad_events: true,
+//   encoding: 'linear16',
+//   sample_rate: 24000,
+//   channels: 1,
+//   endpointing: 700  // ← ADD THIS
+// });
+    
+//     let lastTranscript = '';
+//     let processingTimer = null;
+//     let lastProcessedTranscript = '';
+//     let t0 = null;
+    
+//     dgConnection.on('open', () => {
+//       console.log(`✅ Connected: ${sessionId}`);
+//       deepgramConnections.set(sessionId, dgConnection);
+//       console.log('📊 Total connections:', deepgramConnections.size);
+//     });
+    
+
+//  let lastAudioTime = Date.now();
+// let speechStartTime = null;
+// dgConnection.on('Results', (data) => {
+//   const transcript = data.channel.alternatives[0].transcript;
+  
+//   if (transcript && transcript.length > 0) {
+    
+//     // CONSOLE LOGS TO CHECK SILENCE & ENDPOINTING
+//     console.log('\n📊 === DEEPGRAM RESPONSE ===');
+//     console.log('📝 Transcript:', transcript);
+//     console.log('✅ is_final:', data.is_final);
+//     console.log('🔚 speech_final:', data.speech_final);
+    
+//     // CHECK SILENCE DURATION (if available in response)
+//     if (data.speech_final) {
+//       console.log('🎯 ENDPOINTING TRIGGERED!');
+//       console.log('   ✅ Detected 700ms of silence');
+//       console.log('   ✅ Complete utterance finalized');
+//     }
+    
+//     // Show metadata if available
+//     if (data.duration) {
+//       console.log('⏱️  Audio duration:', data.duration * 1000 + 'ms');
+//     }
+    
+//     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+    
+//     const channel = `session-${sessionId}`;
+    
+//     // Send interim transcripts to frontend
+//     pusher.trigger(channel, 'transcript-interim', {
+//       text: transcript,
+//       is_final: data.is_final,
+//       speech_final: data.speech_final
+//     }).catch(err => console.error('Pusher error:', err));
+    
+//     // Only process when BOTH is_final AND speech_final are true
+//     if (data.is_final && data.speech_final) {
+      
+//       // Prevent duplicate processing
+//       if (transcript !== lastProcessedTranscript) {
+        
+//         const t0 = Date.now();
+        
+//         console.log('🚀 === PROCESSING COMPLETE UTTERANCE ===');
+//         console.log(`[T=0] COMPLETE UTTERANCE DETECTED`);
+//         console.log(`Transcript: "${transcript}"`);
+        
+//         const t_stt_end = Date.now();
+//         console.log(`[${t_stt_end - t0}ms] STT END`);
+        
+//         // Send final transcript to frontend
+//         pusher.trigger(channel, 'transcript', {
+//           text: transcript
+//         }).then(() => {
+//           console.log(`✅ Transcript sent via Pusher`);
+//         }).catch(err => {
+//           console.error('❌ Pusher error:', err);
+//         });
+        
+//         lastProcessedTranscript = transcript;
+//         processWithLLM(sessionId, transcript, t0);
+        
+//       } else {
+//         console.log('⚠️  Duplicate transcript, skipping');
 //       }
-//     );
-    
-//     openaiWs.on('open', () => {
-//       console.log('✅ Connected to OpenAI for session:', sessionId);
-      
-//       // Configure session
-//       const sessionConfig = {
-//         type: 'session.update',
-//         session: {
-//           modalities: ['text', 'audio'],
-//           instructions: 'You are a helpful AI meeting assistant. Be concise, friendly, and natural in conversation. Keep responses under 3 sentences.',
-//           voice: 'alloy',
-//           input_audio_format: 'pcm16',
-//           output_audio_format: 'pcm16',
-//           turn_detection: {
-//             type: 'server_vad',
-//             threshold: 0.5,
-//             prefix_padding_ms: 300,
-//             silence_duration_ms: 500
-//           }
-//         }
-//       };
-      
-//       console.log('📤 Sending session config to OpenAI');
-//       openaiWs.send(JSON.stringify(sessionConfig));
-      
-//       openaiConnections.set(sessionId, openaiWs);
-//       console.log('💾 Stored connection for session:', sessionId);
-//       console.log('📊 Total active connections:', openaiConnections.size);
-//     });
-    
-//     // OpenAI -> Store audio locally or send via Pusher
-//     openaiWs.on('message', (data) => {
-//       try {
-//         const message = JSON.parse(data.toString());
-//         console.log('📨 Message from OpenAI:', message.type);
-        
-//         if (message.type === 'session.created') {
-//           console.log('🎉 OpenAI session created successfully');
-//         }
-        
-//         if (message.type === 'response.audio.delta') {
-//           console.log('🔊 Audio response received from OpenAI');
-          
-//           // Store audio locally instead of sending via Pusher
-//           if (!audioResponses.has(sessionId)) {
-//             audioResponses.set(sessionId, []);
-//           }
-//           audioResponses.get(sessionId).push(message.delta);
-//         }
-        
-//         if (message.type === 'input_audio_buffer.speech_started') {
-//           console.log('🎤 OpenAI detected speech start');
-//         }
-        
-//         if (message.type === 'input_audio_buffer.speech_stopped') {
-//           console.log('🎤 OpenAI detected speech stop');
-//         }
-        
-//         // Only send non-audio messages via Pusher
-//         if (message.type !== 'response.audio.delta') {
-//           const channel = `session-${sessionId}`;
-//           pusher.trigger(channel, 'openai-message', message).catch(err => {
-//             console.error('❌ Pusher error:', err.message);
-//           });
-//         }
-        
-//       } catch (error) {
-//         console.error('❌ Error parsing OpenAI message:', error);
+//     } else {
+//       // Show why we're not processing
+//       if (!data.is_final) {
+//         console.log('⏳ Not confident yet (is_final: false)');
+//       } else if (!data.speech_final) {
+//         console.log('⏳ User still speaking (speech_final: false)');
 //       }
+//     }
+//   }
+// });
+//     dgConnection.on('error', (error) => {
+//       console.error('STT ERROR:', error.message);
 //     });
     
-//     openaiWs.on('close', () => {
-//       console.log('🔴 OpenAI disconnected for session:', sessionId);
-//       openaiConnections.delete(sessionId);
-//       audioResponses.delete(sessionId);
-//       console.log('📊 Remaining connections:', openaiConnections.size);
-//     });
+//     // dgConnection.on('close', () => {
+//     //   console.log(`🔴 Disconnected: ${sessionId}`);
+//     //   deepgramConnections.delete(sessionId);
+//     //   conversationHistory.delete(sessionId);
+//     //   if (processingTimer) clearTimeout(processingTimer);
+//     // });
+//     dgConnection.on('close', () => {
+//   console.log(`🔴 Disconnected: ${sessionId}`);
+//   deepgramConnections.delete(sessionId);
+//   conversationHistory.delete(sessionId);
+//   // Removed processingTimer cleanup - no longer needed
+// });
     
-//     openaiWs.on('error', (error) => {
-//       console.error('❌ OpenAI WebSocket error:', error.message);
-//       openaiConnections.delete(sessionId);
-//       audioResponses.delete(sessionId);
-//     });
-    
-//     res.json({ success: true, sessionId });
+//     res.json({ success: true, sessionId, service: 'deepgram' });
 //     console.log('✅ Connect response sent');
     
 //   } catch (error) {
-//     console.error('❌ Connection error:', error);
+//     console.error('CONNECT ERROR:', error);
 //     res.status(500).json({ error: error.message });
 //   }
 // });
 
-// // Endpoint to send audio to OpenAI
 // app.post('/api/send-audio', async (req, res) => {
 //   const { sessionId, audio } = req.body;
   
-//   console.log('\n🔵 === SEND AUDIO REQUEST ===');
-//   console.log('🆔 Session ID:', sessionId);
-//   console.log('🎵 Audio data length:', audio ? audio.length : 0);
-  
 //   if (!sessionId || !audio) {
-//     console.log('❌ Missing required fields');
-//     return res.status(400).json({ error: 'sessionId and audio are required' });
+//     return res.status(400).json({ error: 'Missing data' });
 //   }
   
-//   const openaiWs = openaiConnections.get(sessionId);
+//   const dgConnection = deepgramConnections.get(sessionId);
   
-//   if (!openaiWs) {
-//     console.log('❌ No connection found for session:', sessionId);
-//     console.log('📊 Active sessions:', Array.from(openaiConnections.keys()));
-//     return res.status(400).json({ error: 'No active connection for this session' });
+//   if (!dgConnection) {
+//     console.log('❌ No connection for session:', sessionId);
+//     console.log('📊 Active sessions:', Array.from(deepgramConnections.keys()));
+//     return res.status(400).json({ error: 'No active connection' });
 //   }
   
-//   console.log('🔍 WebSocket state:', openaiWs.readyState, '(1 = OPEN)');
-  
-//   if (openaiWs.readyState === WebSocket.OPEN) {
-//     try {
-//       const audioMessage = {
-//         type: 'input_audio_buffer.append',
-//         audio: audio
-//       };
-      
-//       console.log('📤 Sending audio to OpenAI...');
-//       openaiWs.send(JSON.stringify(audioMessage));
-//       console.log('✅ Audio sent successfully');
-      
-//       res.json({ success: true });
-//     } catch (error) {
-//       console.error('❌ Error sending audio:', error);
-//       res.status(500).json({ error: 'Failed to send audio' });
-//     }
-//   } else {
-//     console.log('❌ WebSocket not open. State:', openaiWs.readyState);
-//     res.status(400).json({ error: 'Connection not ready' });
+//   try {
+//     const audioBuffer = Buffer.from(audio, 'base64');
+//     dgConnection.send(audioBuffer);
+//     res.json({ success: true });
+//   } catch (error) {
+//     console.error('❌ Send audio error:', error);
+//     res.status(500).json({ error: 'Send failed' });
 //   }
 // });
 
-// // Endpoint to get audio responses
 // app.get('/api/get-audio/:sessionId', (req, res) => {
 //   const { sessionId } = req.params;
+//   const audioData = audioResponses.get(sessionId) || [];
   
-//   console.log('🔵 === GET AUDIO REQUEST ===');
-//   console.log('🆔 Session ID:', sessionId);
-  
-//   const audioChunks = audioResponses.get(sessionId) || [];
-  
-//   if (audioChunks.length > 0) {
-//     console.log('✅ Returning', audioChunks.length, 'audio chunks');
-//     const chunks = [...audioChunks];
-//     audioResponses.set(sessionId, []); // Clear after getting
-//     res.json({ audio: chunks });
+//   if (audioData.length > 0) {
+//     const data = [...audioData];
+//     audioResponses.set(sessionId, []);
+//     res.json({ 
+//       audio: data.map(d => d.audio),
+//       t0: data[0].t0
+//     });
 //   } else {
 //     res.json({ audio: [] });
 //   }
 // });
 
-// // Error handling middleware
 // app.use((error, req, res, next) => {
-//   console.error('❌ Server Error:', error);
-  
-//   res.status(500).json({ 
-//     error: 'Internal server error',
-//     ...(process.env.NODE_ENV === 'development' && { details: error.message })
-//   });
+//   console.error('SERVER ERROR:', error.message);
+//   res.status(500).json({ error: 'Server error' });
 // });
 
-// // 404 handler
 // app.use((req, res) => {
-//   console.log('❌ 404 - Route not found:', req.path);
-//   res.status(404).json({ error: 'Route not found' });
+//   res.status(404).json({ error: 'Not found' });
 // });
 
-// // For local development
 // const startServer = async () => {
 //   const PORT = process.env.PORT || 3000;
 //   app.listen(PORT, () => {
-//     console.log('\n🚀🚀🚀 SERVER STARTED 🚀🚀🚀');
-//     console.log(`📡 Pusher Channels ready for real-time updates`);
-//     console.log(`🌐 API available at: http://localhost:${PORT}`);
-//     console.log(`🎯 Environment: ${process.env.NODE_ENV || 'development'}\n`);
+//     console.log(`\n⚡ Server running on http://localhost:${PORT}\n`);
 //   });
 // };
 
-// // Only start server if not in a serverless environment
 // if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
 //   startServer();
 // }
 
-// // Export the Express app for Vercel
 // module.exports = app;
+
 const express = require('express');
 const cors = require('cors');
 const Pusher = require('pusher');
 const WebSocket = require('ws');
 require('dotenv').config();
 const { createClient } = require('@deepgram/sdk');
+const Groq = require('groq-sdk');
 
 const app = express();
 
@@ -306,11 +407,15 @@ app.use(cors({
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const DEEPGRAM_API_KEY = process.env.DEEPGRAM_API_KEY;
 
-console.log('🔑 OpenAI API Key present:', !!OPENAI_API_KEY);
+console.log('🔑 Groq API Key present:', !!GROQ_API_KEY);
 console.log('🔑 Deepgram API Key present:', !!DEEPGRAM_API_KEY);
+
+const groq = new Groq({
+  apiKey: GROQ_API_KEY
+});
 
 const deepgram = createClient(DEEPGRAM_API_KEY);
 console.log('🎙️ Deepgram client initialized');
@@ -319,64 +424,170 @@ const deepgramConnections = new Map();
 const audioResponses = new Map();
 const conversationHistory = new Map();
 
-async function processWithLLM(sessionId, userMessage, t0) {
+// Helper function to add messages to conversation history with speaker labels
+function addToHistory(sessionId, speaker, message) {
+  if (!conversationHistory.has(sessionId)) {
+    conversationHistory.set(sessionId, []);
+  }
+  
+  const history = conversationHistory.get(sessionId);
+  
+  history.push({
+    speaker: speaker,
+    content: message,
+    timestamp: new Date().toISOString()
+  });
+  
+  // Keep last 12 messages for context
+  if (history.length > 12) {
+    history.splice(0, 2);
+  }
+  
+  conversationHistory.set(sessionId, history);
+}
+
+// Context-aware LLM processing with Groq + Llama
+async function processWithLLMContextAware(sessionId, t0) {
   try {
     if (!conversationHistory.has(sessionId)) {
       conversationHistory.set(sessionId, []);
     }
+    
     const history = conversationHistory.get(sessionId);
     
-    history.push({ role: 'user', content: userMessage });
-    if (history.length > 8) history.splice(0, 2);
+    // Build conversation context with speaker labels
+    const conversationContext = history.map(msg => {
+      return `${msg.speaker}: ${msg.content}`;
+    }).join('\n');
     
     const t_llm_start = Date.now();
-    console.log(`[${t_llm_start - t0}ms] LLM START`);
     
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${OPENAI_API_KEY}`
-      },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        messages: [
-          {
-            role: 'system',
-            content: 'Reply in 1 short sentence (8-12 words). Be natural and conversational.'
-          },
-          ...history
-        ],
-        max_tokens: 30,
-        temperature: 0.7,
-        stream: false
-      })
+    console.log('\n' + '🤖'.repeat(40));
+    console.log('🤖 LLM CONTEXT-AWARE PROCESSING (GROQ + LLAMA)');
+    console.log('🤖'.repeat(40));
+    console.log(`\n⏱️  [${t_llm_start - t0}ms] Groq LLM Request Starting...`);
+    console.log('🦙 Model: Llama 4 Maverick 17B');
+    
+    console.log('\n📜 CONVERSATION CONTEXT SENT TO LLM:');
+    console.log('┌' + '─'.repeat(78) + '┐');
+    if (conversationContext.length > 0) {
+      conversationContext.split('\n').forEach(line => {
+        console.log('│ ' + line.padEnd(77) + '│');
+      });
+    } else {
+      console.log('│ ' + '(No conversation history yet)'.padEnd(77) + '│');
+    }
+    console.log('└' + '─'.repeat(78) + '┘');
+    
+    console.log('\n📊 CONTEXT STATS:');
+    console.log(`   Total messages in context: ${history.length}`);
+    console.log(`   Context length: ${conversationContext.length} characters`);
+    
+    const response = await groq.chat.completions.create({
+      model: 'meta-llama/llama-4-maverick-17b-128e-instruct',
+      messages: [
+        {
+          role: 'system',
+          content: `You are an AI Assistant in a meeting. Speakers are labeled as Speaker 0, Speaker 1, etc.
+
+CRITICAL: Reply with ONLY your direct answer. NO explanations. NO reasoning. NO meta-commentary.
+
+Rules:
+1. If someone says "bot", "assistant", or "AI" → Give direct answer
+2. If it's a follow-up after you just spoke → Give direct answer  
+3. If people talking to each other → Say only "SILENT"
+4. If unclear → Say only "SILENT"
+
+Keep responses under 25 words.
+
+CORRECT Responses:
+"Hey bot, what's 2+2?" → "Four."
+"How are you?" → "I'm well, thanks!"
+"Tell me about cricket" → "It's a bat-and-ball sport."
+"Did you send the report?" "Yes" → "SILENT"
+
+WRONG Responses (NEVER do this):
+"Yes, I should respond. Four." ❌
+"Since they're asking me, I'll say..." ❌
+"The answer is I'm great and what about you." → Just say "I'm great and what about you" ✓`
+        },
+        {
+          role: 'user',
+          content: `Conversation:\n${conversationContext}\n\nIf conversation is between others, say "SILENT". If you should respond, give ONLY your answer.`
+        }
+      ],
+      max_completion_tokens: 30,
+      temperature: 0.5,
+      top_p: 1
     });
     
-    const data = await response.json();
-    const fullResponse = data.choices[0].message.content.trim();
+    const llmResponse = response.choices[0].message.content.trim();
     
     const t_llm_end = Date.now();
-    console.log(`[${t_llm_end - t0}ms] LLM END: "${fullResponse}"`);
+    console.log(`\n⏱️  [${t_llm_end - t0}ms] Groq Response Received`);
+    console.log(`⏱️  Groq took: ${t_llm_end - t_llm_start}ms ⚡`);
+    console.log(`📊 Tokens used: ${response.usage.total_tokens}`);
+    console.log(`📊 Prompt tokens: ${response.usage.prompt_tokens}`);
+    console.log(`📊 Completion tokens: ${response.usage.completion_tokens}`);
     
-    // Send AI response to frontend via Pusher
-    const channel = `session-${sessionId}`;
+    console.log('\n💭 LLM DECISION:');
+    console.log('┌' + '─'.repeat(78) + '┐');
+    console.log('│ ' + llmResponse.padEnd(77) + '│');
+    console.log('└' + '─'.repeat(78) + '┘');
     
-    try {
-      await pusher.trigger(channel, 'ai-response', {
-        text: fullResponse
-      });
-      console.log(`✅ AI response sent via Pusher`);
-    } catch (err) {
-      console.error('❌ Pusher error:', err);
+    // Check if LLM decided to respond or stay silent
+    const isSilent = llmResponse.toUpperCase() === 'SILENT' || 
+                     llmResponse.toUpperCase().startsWith('SILENT');
+    
+    if (isSilent) {
+      console.log('\n🤫 DECISION: STAY SILENT');
+      console.log('   Reason: Conversation between other participants');
+      console.log('   Action: No speech generation');
+      
+      const channel = `session-${sessionId}`;
+      pusher.trigger(channel, 'bot-silent', {
+        message: 'Bot is listening but not responding'
+      }).catch(err => console.error('Pusher error:', err));
+      
+      console.log('   ✅ Sent "bot-silent" event to frontend');
+      console.log('\n' + '='.repeat(80) + '\n');
+      
+      return;
     }
     
-    history.push({ role: 'assistant', content: fullResponse });
+    // LLM decided to respond
+    console.log('\n✅ DECISION: RESPOND');
+    console.log(`   Response: "${llmResponse}"`);
+    console.log('   Action: Generate speech and send to user');
     
-    await convertToSpeech(sessionId, fullResponse, t0);
+    const channel = `session-${sessionId}`;
+    
+    await pusher.trigger(channel, 'ai-response', {
+      text: llmResponse
+    });
+    console.log('   ✅ Sent AI response to frontend via Pusher');
+    
+    console.log('\n📚 UPDATING CONVERSATION HISTORY:');
+    console.log(`   Before: ${history.length} messages`);
+    
+    // Add bot's response to history
+    addToHistory(sessionId, 'AI Assistant', llmResponse);
+    
+    console.log(`   After: ${conversationHistory.get(sessionId).length} messages`);
+    console.log(`   Added: AI Assistant: "${llmResponse}"`);
+    
+    console.log('\n🔊 STARTING TEXT-TO-SPEECH CONVERSION...');
+    console.log('-'.repeat(80));
+    
+    // Convert to speech
+    await convertToSpeech(sessionId, llmResponse, t0);
+    
+    console.log('\n' + '='.repeat(80) + '\n');
     
   } catch (error) {
-    console.error('LLM ERROR:', error.message);
+    console.error('\n❌ LLM ERROR:', error.message);
+    console.error('Full error:', error);
+    console.log('\n' + '='.repeat(80) + '\n');
   }
 }
 
@@ -433,8 +644,15 @@ async function convertToSpeech(sessionId, text, t0) {
 
 app.get('/', (req, res) => {
   res.json({ 
-    message: 'Zoom Voice Bot', 
+    message: 'Zoom Voice Bot with Llama + Nova-3', 
     status: 'running',
+    features: {
+      stt: 'Deepgram Nova-3',
+      llm: 'Groq Llama 4 Maverick',
+      tts: 'Deepgram Aura',
+      diarization: 'enabled',
+      contextAware: 'enabled'
+    },
     endpoints: {
       health: '/api/health',
       connect: '/api/connect',
@@ -448,7 +666,12 @@ app.get('/api/health', (req, res) => {
   res.json({ 
     status: 'ok', 
     connections: deepgramConnections.size,
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    models: {
+      stt: 'nova-3',
+      llm: 'llama-4-maverick-17b',
+      tts: 'aura-asteria-en'
+    }
   });
 });
 
@@ -462,25 +685,24 @@ app.post('/api/connect', async (req, res) => {
   }
   
   try {
-    console.log('🔌 Connecting to Deepgram STT...');
+    console.log('🔌 Connecting to Deepgram STT (Nova-3)...');
     
     const dgConnection = deepgram.listen.live({
-  model: 'nova-3',
-  language: 'en-US',
-  smart_format: true,
-  interim_results: true,
-  utterance_end_ms: 1000,
-  vad_events: true,
-  encoding: 'linear16',
-  sample_rate: 24000,
-  channels: 1,
-  endpointing: 700  // ← ADD THIS
-});
+      model: 'nova-3',
+      language: 'en-US',
+      smart_format: true,
+      interim_results: true,
+      utterance_end_ms: 1000,
+      vad_events: true,
+      encoding: 'linear16',
+      sample_rate: 24000,
+      channels: 1,
+      endpointing: 700,
+      diarize: true,        // ← ENABLED: Speaker identification
+      punctuate: true       // ← Better formatting
+    });
     
-    let lastTranscript = '';
-    let processingTimer = null;
     let lastProcessedTranscript = '';
-    let t0 = null;
     
     dgConnection.on('open', () => {
       console.log(`✅ Connected: ${sessionId}`);
@@ -488,151 +710,158 @@ app.post('/api/connect', async (req, res) => {
       console.log('📊 Total connections:', deepgramConnections.size);
     });
     
-    // dgConnection.on('Results', (data) => {
-    //   const transcript = data.channel.alternatives[0].transcript;
+    dgConnection.on('Results', (data) => {
+      const transcript = data.channel.alternatives[0].transcript;
       
-    //   if (transcript && transcript.length > 0) {
-    //     lastTranscript = transcript;
+      if (transcript && transcript.length > 0) {
         
-    //     // Send interim transcripts to frontend
-    //     const channel = `session-${sessionId}`;
-    //     pusher.trigger(channel, 'transcript-interim', {
-    //       text: transcript,
-    //       is_final: data.is_final
-    //     }).catch(err => console.error('Pusher error:', err));
+        // Extract speaker ID from diarization
+        let speakerId = "Unknown";
+        let speakerNumber = null;
         
-    //     if (processingTimer) {
-    //       clearTimeout(processingTimer);
-    //     }
+        console.log('\n' + '='.repeat(80));
+        console.log('📊 DEEPGRAM RESPONSE RECEIVED');
+        console.log('='.repeat(80));
         
-    //     // Only process final transcripts
-    //     if (data.is_final) {
-    //       processingTimer = setTimeout(() => {
-    //         if (lastTranscript && lastTranscript !== lastProcessedTranscript) {
-    //           t0 = Date.now();
-              
-    //           console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    //           console.log(`[T=0] USER STOPPED SPEAKING`);
-    //           console.log(`Transcript: "${lastTranscript}"`);
-              
-    //           const t_stt_end = Date.now();
-    //           console.log(`[${t_stt_end - t0}ms] STT END`);
-              
-    //           // Send final transcript to frontend
-    //           pusher.trigger(channel, 'transcript', {
-    //             text: lastTranscript
-    //           }).then(() => {
-    //             console.log(`✅ Transcript sent via Pusher`);
-    //           }).catch(err => {
-    //             console.error('❌ Pusher error:', err);
-    //           });
-              
-    //           lastProcessedTranscript = lastTranscript;
-    //           processWithLLM(sessionId, lastTranscript, t0);
-    //         }
-    //       }, 500);
-    //     }
-    //   }
-    // });
-    
- let lastAudioTime = Date.now();
-let speechStartTime = null;
-dgConnection.on('Results', (data) => {
-  const transcript = data.channel.alternatives[0].transcript;
-  
-  if (transcript && transcript.length > 0) {
-    
-    // CONSOLE LOGS TO CHECK SILENCE & ENDPOINTING
-    console.log('\n📊 === DEEPGRAM RESPONSE ===');
-    console.log('📝 Transcript:', transcript);
-    console.log('✅ is_final:', data.is_final);
-    console.log('🔚 speech_final:', data.speech_final);
-    
-    // CHECK SILENCE DURATION (if available in response)
-    if (data.speech_final) {
-      console.log('🎯 ENDPOINTING TRIGGERED!');
-      console.log('   ✅ Detected 700ms of silence');
-      console.log('   ✅ Complete utterance finalized');
-    }
-    
-    // Show metadata if available
-    if (data.duration) {
-      console.log('⏱️  Audio duration:', data.duration * 1000 + 'ms');
-    }
-    
-    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
-    
-    const channel = `session-${sessionId}`;
-    
-    // Send interim transcripts to frontend
-    pusher.trigger(channel, 'transcript-interim', {
-      text: transcript,
-      is_final: data.is_final,
-      speech_final: data.speech_final
-    }).catch(err => console.error('Pusher error:', err));
-    
-    // Only process when BOTH is_final AND speech_final are true
-    if (data.is_final && data.speech_final) {
-      
-      // Prevent duplicate processing
-      if (transcript !== lastProcessedTranscript) {
+        console.log('\n🔍 CHECKING FOR DIARIZATION DATA:');
+        console.log('   Has words array?', !!data.channel.alternatives[0].words);
         
-        const t0 = Date.now();
+        if (data.channel.alternatives[0].words && data.channel.alternatives[0].words.length > 0) {
+          const firstWord = data.channel.alternatives[0].words[0];
+          console.log('   First word object:', JSON.stringify(firstWord, null, 2));
+          console.log('   Speaker field exists?', firstWord.speaker !== undefined);
+          console.log('   Speaker value:', firstWord.speaker);
+          
+          if (firstWord.speaker !== undefined) {
+            speakerId = `Speaker ${firstWord.speaker}`;
+            speakerNumber = firstWord.speaker;
+          }
+          
+          // Show all unique speakers in this utterance
+          const allSpeakers = data.channel.alternatives[0].words.map(w => w.speaker).filter(s => s !== undefined);
+          const uniqueSpeakers = [...new Set(allSpeakers)];
+          console.log('   Unique speakers in utterance:', uniqueSpeakers);
+          
+          if (uniqueSpeakers.length > 1) {
+            console.log('   ⚠️  WARNING: Multiple speakers detected in single utterance!');
+          }
+        } else {
+          console.log('   ❌ NO WORDS ARRAY - Diarization might not be enabled!');
+        }
         
-        console.log('🚀 === PROCESSING COMPLETE UTTERANCE ===');
-        console.log(`[T=0] COMPLETE UTTERANCE DETECTED`);
-        console.log(`Transcript: "${transcript}"`);
+        console.log('\n📝 TRANSCRIPT DATA:');
+        console.log('   👤 Speaker ID:', speakerId);
+        console.log('   💬 Transcript:', `"${transcript}"`);
+        console.log('   ✅ is_final:', data.is_final);
+        console.log('   🔚 speech_final:', data.speech_final);
         
-        const t_stt_end = Date.now();
-        console.log(`[${t_stt_end - t0}ms] STT END`);
+        if (data.duration) {
+          console.log('   ⏱️  Duration:', (data.duration * 1000).toFixed(2) + 'ms');
+        }
         
-        // Send final transcript to frontend
-        pusher.trigger(channel, 'transcript', {
-          text: transcript
-        }).then(() => {
-          console.log(`✅ Transcript sent via Pusher`);
-        }).catch(err => {
-          console.error('❌ Pusher error:', err);
-        });
+        if (data.speech_final) {
+          console.log('\n🎯 ENDPOINTING TRIGGERED!');
+          console.log('   ✅ Detected 700ms of silence');
+          console.log('   ✅ Complete utterance finalized');
+        }
         
-        lastProcessedTranscript = transcript;
-        processWithLLM(sessionId, transcript, t0);
+        console.log('\n' + '-'.repeat(80));
         
-      } else {
-        console.log('⚠️  Duplicate transcript, skipping');
+        const channel = `session-${sessionId}`;
+        
+        // Send interim transcripts to frontend
+        pusher.trigger(channel, 'transcript-interim', {
+          text: transcript,
+          speaker: speakerId,
+          is_final: data.is_final,
+          speech_final: data.speech_final
+        }).catch(err => console.error('Pusher error:', err));
+        
+        // Only process when BOTH is_final AND speech_final are true
+        if (data.is_final && data.speech_final) {
+          
+          // Prevent duplicate processing
+          if (transcript !== lastProcessedTranscript) {
+            
+            const t0 = Date.now();
+            
+            console.log('\n' + '🚀'.repeat(40));
+            console.log('🚀 PROCESSING COMPLETE UTTERANCE');
+            console.log('🚀'.repeat(40));
+            console.log(`\n👤 Speaker: ${speakerId}`);
+            console.log(`💬 Transcript: "${transcript}"`);
+            
+            const t_stt_end = Date.now();
+            console.log(`\n⏱️  [${t_stt_end - t0}ms] STT Processing Complete`);
+            
+            // Send final transcript to frontend
+            pusher.trigger(channel, 'transcript', {
+              text: transcript,
+              speaker: speakerId
+            }).then(() => {
+              console.log(`✅ Transcript sent to frontend via Pusher`);
+            }).catch(err => {
+              console.error('❌ Pusher error:', err);
+            });
+            
+            console.log('\n📚 ADDING TO CONVERSATION HISTORY:');
+            console.log(`   Before: ${conversationHistory.get(sessionId)?.length || 0} messages`);
+            
+            // Add to conversation history with speaker label
+            addToHistory(sessionId, speakerId, transcript);
+            
+            console.log(`   After: ${conversationHistory.get(sessionId)?.length || 0} messages`);
+            console.log('\n📋 CURRENT CONVERSATION HISTORY:');
+            const history = conversationHistory.get(sessionId) || [];
+            history.forEach((msg, idx) => {
+              console.log(`   [${idx + 1}] ${msg.speaker}: "${msg.content}"`);
+            });
+            
+            console.log('\n🤖 SENDING TO LLM FOR DECISION...');
+            console.log('-'.repeat(80));
+            
+            // Send to LLM with full context (LLM decides whether to respond)
+            processWithLLMContextAware(sessionId, t0);
+            
+            lastProcessedTranscript = transcript;
+            
+          } else {
+            console.log('\n⚠️  DUPLICATE TRANSCRIPT DETECTED - SKIPPING');
+            console.log(`   Transcript: "${transcript}"`);
+          }
+        } else {
+          // Show why we're not processing
+          if (!data.is_final) {
+            console.log('⏳ Not confident yet (is_final: false)');
+          } else if (!data.speech_final) {
+            console.log('⏳ User still speaking (speech_final: false)');
+          }
+        }
       }
-    } else {
-      // Show why we're not processing
-      if (!data.is_final) {
-        console.log('⏳ Not confident yet (is_final: false)');
-      } else if (!data.speech_final) {
-        console.log('⏳ User still speaking (speech_final: false)');
-      }
-    }
-  }
-});
-    dgConnection.on('error', (error) => {
-      console.error('STT ERROR:', error.message);
     });
     
-    // dgConnection.on('close', () => {
-    //   console.log(`🔴 Disconnected: ${sessionId}`);
-    //   deepgramConnections.delete(sessionId);
-    //   conversationHistory.delete(sessionId);
-    //   if (processingTimer) clearTimeout(processingTimer);
-    // });
-    dgConnection.on('close', () => {
-  console.log(`🔴 Disconnected: ${sessionId}`);
-  deepgramConnections.delete(sessionId);
-  conversationHistory.delete(sessionId);
-  // Removed processingTimer cleanup - no longer needed
-});
+    dgConnection.on('error', (error) => {
+      console.error('❌ STT ERROR:', error.message);
+    });
     
-    res.json({ success: true, sessionId, service: 'deepgram' });
+    dgConnection.on('close', () => {
+      console.log(`🔴 Disconnected: ${sessionId}`);
+      deepgramConnections.delete(sessionId);
+      conversationHistory.delete(sessionId);
+    });
+    
+    res.json({ 
+      success: true, 
+      sessionId, 
+      service: 'deepgram',
+      model: 'nova-3',
+      llm: 'llama-4-maverick-17b',
+      diarization: true
+    });
     console.log('✅ Connect response sent');
     
   } catch (error) {
-    console.error('CONNECT ERROR:', error);
+    console.error('❌ CONNECT ERROR:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -690,7 +919,12 @@ app.use((req, res) => {
 const startServer = async () => {
   const PORT = process.env.PORT || 3000;
   app.listen(PORT, () => {
-    console.log(`\n⚡ Server running on http://localhost:${PORT}\n`);
+    console.log(`\n⚡ Server running on http://localhost:${PORT}`);
+    console.log(`🦙 LLM: Groq Llama 4 Maverick 17B`);
+    console.log(`🎙️  STT: Deepgram Nova-3 (with Diarization)`);
+    console.log(`🔊 TTS: Deepgram Aura`);
+    console.log(`👥 Speaker Awareness: Enabled`);
+    console.log(`🧠 Context-Aware Decisions: Enabled\n`);
   });
 };
 
