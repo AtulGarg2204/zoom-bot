@@ -734,7 +734,7 @@ IMPORTANT:
           content: `Conversation:\n${conversationContext}\n\nIf conversation is between others, say "SILENT". If you should respond, give ONLY your answer.`
         }
       ],
-      max_completion_tokens: 30,
+      max_completion_tokens: 300,
       temperature: 0.5,
       top_p: 1
     });
@@ -1064,7 +1064,7 @@ Rules:
       ],
       model: "openai/gpt-oss-20b",
       temperature: 0.1,
-      max_completion_tokens: 50,
+      max_completion_tokens: 500,
       top_p: 0.5,
       stream: false,              // ← IMPORTANT: Set to false
       reasoning_effort: "low",
