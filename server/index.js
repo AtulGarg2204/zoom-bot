@@ -579,7 +579,7 @@ const pusher = new Pusher({
 
 console.log('🔧 Pusher initialized');
 
-// CORS
+// CORS updated
 app.use(cors({
   origin: '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
