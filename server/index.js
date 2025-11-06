@@ -20,7 +20,7 @@
 
 // console.log('🔧 Pusher initialized');
 
-// // CORS
+// // CORS updated
 // app.use(cors({
 //   origin: '*',
 //   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -69,7 +69,6 @@
 //   conversationHistory.set(sessionId, history);
 // }
 
-// // Context-aware LLM processing with Groq + Llama
 // async function processWithLLMContextAware(sessionId, t0) {
 //   try {
 //     if (!conversationHistory.has(sessionId)) {
@@ -106,40 +105,77 @@
 //     console.log(`   Total messages in context: ${history.length}`);
 //     console.log(`   Context length: ${conversationContext.length} characters`);
     
-//     const response = await groq.chat.completions.create({
-//       model: 'meta-llama/llama-4-maverick-17b-128e-instruct',
-//       messages: [
-//         {
-//           role: 'system',
-//           content: `You are an AI Assistant in a meeting. Speakers are labeled as Speaker 0, Speaker 1, etc.
+//    const response = await groq.chat.completions.create({
+//   model: 'meta-llama/llama-4-maverick-17b-128e-instruct',
+//   messages: [
+//     {
+//       role: 'system',
+//       content: `You are a friendly and helpful AI Assistant in a natural conversation. Speakers are labeled as Speaker 0, Speaker 1, etc.
 
-// CRITICAL: Reply with ONLY your direct answer. NO explanations. NO reasoning. NO meta-commentary.
+// YOUR PERSONALITY:
+// - Warm, approachable, and conversational
+// - Natural and human-like (not robotic)
+// - Helpful but not overly formal
+// - Can show personality and emotion when appropriate
 
-// Rules:
-// 1. If someone says "bot", "assistant", or "AI" → Give direct answer
-// 2. If it's a follow-up after you just spoke → Give direct answer  
-// 3. If people talking to each other → Say only "SILENT"
-// 4. If unclear → Say only "SILENT"
+// RESPONSE STYLE:
+// - Use natural conversation fillers: "Oh", "Well", "You know", "Actually", "Hmm"
+// - Add warmth: "Great question!", "I'd be happy to help", "That's interesting!"
+// - Vary your responses (don't always start the same way)
+// - Keep responses conversational (10-20 words for natural flow)
+// - Use contractions: "I'm" not "I am", "That's" not "That is"
 
-// Keep responses under 25 words.
+// WHEN TO RESPOND:
+// 1. Someone says "bot", "assistant", or "AI" → Respond naturally
+// 2. Someone asks you a direct question → Respond warmly
+// 3. Follow-up after you just spoke → Continue conversation
+// 4. People talking to each other → Say only "SILENT"
+// 5. Unclear who is being addressed → Say only "SILENT"
 
-// CORRECT Responses:
-// "Hey bot, what's 2+2?" → "Four."
-// "How are you?" → "I'm well, thanks!"
-// "Tell me about cricket" → "It's a bat-and-ball sport."
-// "Did you send the report?" "Yes" → "SILENT"
+// EXAMPLES OF NATURAL RESPONSES:
 
-// WRONG Responses (NEVER do this):
-// "Yes, I should respond. Four." ❌
-// "Since they're asking me, I'll say..." ❌
-// "The answer is I'm great and what about you." → Just say "I'm great and what about you" ✓`
-//         },
+// Question: "Hey bot, what's 2+2?"
+// ❌ Bad: "Four."
+// ✅ Good: "Oh, that's four!"
+// ✅ Good: "It's four."
+// ✅ Good: "That'd be four."
+
+// Question: "How are you?"
+// ❌ Bad: "I'm well, thanks."
+// ✅ Good: "I'm doing great, thanks for asking! How about you?"
+// ✅ Good: "Pretty good! Thanks for asking."
+// ✅ Good: "I'm wonderful, thank you!"
+
+// Question: "What do you know about cricket?"
+// ❌ Bad: "It's a bat-and-ball sport."
+// ✅ Good: "Oh, cricket! It's a bat-and-ball sport played between two teams."
+// ✅ Good: "Well, cricket is a really popular sport, especially in countries like India and England."
+// ✅ Good: "Cricket's a fascinating game with two teams competing in innings."
+
+// Question: "What's your name?"
+// ❌ Bad: "I'm an AI Assistant."
+// ✅ Good: "I'm an AI assistant here to help! You can just call me 'bot' or 'assistant'."
+// ✅ Good: "You can call me your AI assistant! I'm here to help with anything you need."
+
+// Question: "Can you help me?"
+// ❌ Bad: "Yes."
+// ✅ Good: "Of course! I'd be happy to help. What do you need?"
+// ✅ Good: "Absolutely! What can I do for you?"
+// ✅ Good: "Sure thing! How can I assist?"
+
+// IMPORTANT:
+// - Be natural, not robotic
+// - Show personality while staying helpful
+// - Keep it conversational but concise (10-20 words)
+// - Never say "Yes, I should respond" or explain your reasoning
+// - If conversation is between others, just say "SILENT"`
+//     },
 //         {
 //           role: 'user',
 //           content: `Conversation:\n${conversationContext}\n\nIf conversation is between others, say "SILENT". If you should respond, give ONLY your answer.`
 //         }
 //       ],
-//       max_completion_tokens: 30,
+//       max_completion_tokens: 300,
 //       temperature: 0.5,
 //       top_p: 1
 //     });
@@ -214,6 +250,174 @@
 //   }
 // }
 
+
+// // async function processWithLLMContextAware(sessionId, t0) {
+// //   try {
+// //     if (!conversationHistory.has(sessionId)) {
+// //       conversationHistory.set(sessionId, []);
+// //     }
+    
+// //     const history = conversationHistory.get(sessionId);
+    
+// //     // Build conversation context with speaker labels
+// //     const conversationContext = history.map(msg => {
+// //       return `${msg.speaker}: ${msg.content}`;
+// //     }).join('\n');
+    
+// //     const t_llm_start = Date.now();
+    
+// //     console.log('\n' + '🤖'.repeat(40));
+// //     console.log('🤖 LLM CONTEXT-AWARE PROCESSING (GPT-OSS-20B)');
+// //     console.log('🤖'.repeat(40));
+// //     console.log(`\n⏱️  [${t_llm_start - t0}ms] GPT-OSS-20B Request Starting...`);
+// //     console.log('🧠 Model: GPT-OSS-20B (OpenAI via Groq)');
+    
+// //     console.log('\n📜 CONVERSATION CONTEXT SENT TO LLM:');
+// //     console.log('┌' + '─'.repeat(78) + '┐');
+// //     if (conversationContext.length > 0) {
+// //       conversationContext.split('\n').forEach(line => {
+// //         console.log('│ ' + line.padEnd(77) + '│');
+// //       });
+// //     } else {
+// //       console.log('│ ' + '(No conversation history yet)'.padEnd(77) + '│');
+// //     }
+// //     console.log('└' + '─'.repeat(78) + '┘');
+    
+// //     console.log('\n📊 CONTEXT STATS:');
+// //     console.log(`   Total messages in context: ${history.length}`);
+// //     console.log(`   Context length: ${conversationContext.length} characters`);
+    
+// //     // Single call: Decision + Response in JSON format
+// //     const response = await groq.chat.completions.create({
+// //       messages: [
+// //         {
+// //           role: 'system',
+// //           content: 'You are an AI Assistant analyzer. Respond ONLY with valid JSON.'
+// //         },
+// //         {
+// //           role: 'user',
+// //           content: `Analyze this conversation and decide if you should respond. If yes, provide response.
+
+// // Conversation:
+// // ${conversationContext}
+
+// // Rules:
+// // - Respond if someone says "bot", "assistant", or "AI"
+// // - Respond if it's a follow-up after you just spoke
+// // - Stay silent if people talking to each other
+// // - Keep responses under 12 words
+
+// // Respond with ONLY this JSON format (no extra text):
+
+// // If should respond:
+// // {
+// //   "should_respond": true,
+// //   "response": "your short response here"
+// // }
+
+// // If should NOT respond:
+// // {
+// //   "should_respond": false,
+// //   "response": ""
+// // }`
+// //         }
+// //       ],
+// //       model: 'openai/gpt-oss-20b',
+// //       temperature: 0.5,
+// //       max_completion_tokens: 100,
+// //       top_p: 0.8,
+// //       stream: false,
+// //       reasoning_effort: 'low',
+// //       stop: null
+// //     });
+    
+// //     const responseText = response.choices[0]?.message?.content || "";
+    
+// //     console.log('\n📥 Raw GPT Response:', responseText);
+    
+// //     // Parse JSON response
+// //     let jsonResponse;
+// //     try {
+// //       jsonResponse = JSON.parse(responseText.trim());
+// //       console.log('📊 Parsed JSON:', JSON.stringify(jsonResponse, null, 2));
+// //     } catch (parseError) {
+// //       console.error('❌ JSON Parse Error:', parseError.message);
+// //       console.log('   Raw text:', responseText);
+// //       // Fallback: treat as should not respond
+// //       console.log('   Fallback: Treating as SILENT due to parse error');
+      
+// //       const channel = `session-${sessionId}`;
+// //       pusher.trigger(channel, 'bot-silent', {
+// //         message: 'Bot is listening but not responding'
+// //       }).catch(err => console.error('Pusher error:', err));
+      
+// //       return;
+// //     }
+    
+// //     const t_llm_end = Date.now();
+// //     console.log(`\n⏱️  [${t_llm_end - t0}ms] GPT Response Received`);
+// //     console.log(`⏱️  GPT took: ${t_llm_end - t_llm_start}ms ⚡`);
+    
+// //     const shouldRespond = jsonResponse.should_respond || false;
+// //     const llmResponse = jsonResponse.response || "";
+    
+// //     console.log('\n💭 LLM DECISION:');
+// //     console.log('┌' + '─'.repeat(78) + '┐');
+// //     console.log('│ Should Respond: ' + (shouldRespond ? 'YES ✅' : 'NO ❌').padEnd(60) + '│');
+// //     if (shouldRespond) {
+// //       console.log('│ Response: ' + llmResponse.substring(0, 68).padEnd(68) + '│');
+// //     }
+// //     console.log('└' + '─'.repeat(78) + '┘');
+    
+// //     if (!shouldRespond) {
+// //       console.log('\n🤫 DECISION: STAY SILENT');
+// //       console.log('   Action: No speech generation');
+      
+// //       const channel = `session-${sessionId}`;
+// //       pusher.trigger(channel, 'bot-silent', {
+// //         message: 'Bot is listening but not responding'
+// //       }).catch(err => console.error('Pusher error:', err));
+      
+// //       console.log('   ✅ Sent "bot-silent" event to frontend');
+// //       console.log('\n' + '='.repeat(80) + '\n');
+      
+// //       return;
+// //     }
+    
+// //     // Should respond - use the generated response
+// //     console.log('\n✅ DECISION: RESPOND');
+// //     console.log(`   Response: "${llmResponse}"`);
+// //     console.log('   Action: Generate speech and send to user');
+    
+// //     const channel = `session-${sessionId}`;
+    
+// //     await pusher.trigger(channel, 'ai-response', {
+// //       text: llmResponse
+// //     });
+// //     console.log('   ✅ Sent AI response to frontend via Pusher');
+    
+// //     console.log('\n📚 UPDATING CONVERSATION HISTORY:');
+// //     console.log(`   Before: ${history.length} messages`);
+    
+// //     addToHistory(sessionId, 'AI Assistant', llmResponse);
+    
+// //     console.log(`   After: ${conversationHistory.get(sessionId).length} messages`);
+// //     console.log(`   Added: AI Assistant: "${llmResponse}"`);
+    
+// //     console.log('\n🔊 STARTING TEXT-TO-SPEECH CONVERSION...');
+// //     console.log('-'.repeat(80));
+    
+// //     await convertToSpeech(sessionId, llmResponse, t0);
+    
+// //     console.log('\n' + '='.repeat(80) + '\n');
+    
+// //   } catch (error) {
+// //     console.error('\n❌ LLM ERROR:', error.message);
+// //     console.error('Full error:', error);
+// //     console.log('\n' + '='.repeat(80) + '\n');
+// //   }
+// // }
+
 // async function convertToSpeech(sessionId, text, t0) {
 //   try {
 //     const t_tts_start = Date.now();
@@ -265,6 +469,89 @@
 //   }
 // }
 
+// async function checkIfSentenceComplete(transcript, t_start) {
+//   try {
+//     console.log('\n🔍 Sentence Completeness Check (JSON Mode)');
+//     console.log('━'.repeat(80));
+//     console.log(`   Analyzing: "${transcript}"`);
+    
+//     const completion = await groq.chat.completions.create({
+//       messages: [
+//         {
+//           role: "system",
+//           content: "You are a sentence analyzer. You must respond ONLY with valid JSON."
+//         },
+//         {
+//           role: "user",
+//           content: `Analyze if this sentence is complete or incomplete.
+
+// Sentence: "${transcript}"
+
+// Respond with ONLY this JSON format (no explanations, no extra text):
+// {
+//   "status": "COMPLETE"
+// }
+
+// OR
+
+// {
+//   "status": "INCOMPLETE"
+// }
+
+// Rules:
+// - COMPLETE: User finished speaking, expects response
+// - INCOMPLETE: User was cut off mid-sentence`
+//         }
+//       ],
+//       model: "openai/gpt-oss-20b",
+//       temperature: 0.1,
+//       max_completion_tokens: 500,
+//       top_p: 0.5,
+//       stream: false,              // ← IMPORTANT: Set to false
+//       reasoning_effort: "low",
+//       stop: null
+//     });
+    
+//     const responseText = completion.choices[0]?.message?.content || "";
+    
+//     console.log('📥 Raw Response:', responseText);
+    
+//     // Parse JSON response
+//     let jsonResponse;
+//     try {
+//       jsonResponse = JSON.parse(responseText.trim());
+//       console.log('📊 Parsed JSON:', JSON.stringify(jsonResponse, null, 2));
+//     } catch (parseError) {
+//       console.error('❌ JSON Parse Error:', parseError.message);
+//       console.log('   Raw text that failed to parse:', responseText);
+//       // Fallback: check if response contains the word COMPLETE
+//       const isComplete = responseText.toUpperCase().includes('COMPLETE') && 
+//                         !responseText.toUpperCase().includes('INCOMPLETE');
+//       console.log('   Using text fallback → ', isComplete ? 'COMPLETE' : 'INCOMPLETE');
+//       return isComplete;
+//     }
+    
+//     // Extract status from JSON
+//     const status = jsonResponse.status || "";
+//     const isComplete = status.toUpperCase() === "COMPLETE";
+    
+//     const t_end = Date.now();
+//     console.log('━'.repeat(80));
+//     console.log(`⏱️  Check took: ${t_end - t_start}ms`);
+//     console.log(`🎯 Status: ${status}`);
+//     console.log(`✅ Final Decision: ${isComplete ? 'COMPLETE ✅' : 'INCOMPLETE ❌'}`);
+//     console.log('━'.repeat(80));
+    
+//     return isComplete;
+    
+//   } catch (error) {
+//     console.error('❌ Error checking sentence completeness:', error.message);
+//     console.error('Full error:', error);
+//     // On error, assume COMPLETE (better to respond than get stuck)
+//     console.log('⚠️  Error fallback: Treating as COMPLETE');
+//     return true;
+//   }
+// }
 // app.get('/', (req, res) => {
 //   res.json({ 
 //     message: 'Zoom Voice Bot with Llama + Nova-3', 
@@ -333,7 +620,7 @@
 //       console.log('📊 Total connections:', deepgramConnections.size);
 //     });
     
-//     dgConnection.on('Results', (data) => {
+//     dgConnection.on('Results', async(data) => {
 //       const transcript = data.channel.alternatives[0].transcript;
       
 //       if (transcript && transcript.length > 0) {
@@ -400,66 +687,141 @@
 //           speech_final: data.speech_final
 //         }).catch(err => console.error('Pusher error:', err));
         
-//         // Only process when BOTH is_final AND speech_final are true
-//         if (data.is_final && data.speech_final) {
-          
-//           // Prevent duplicate processing
-//           if (transcript !== lastProcessedTranscript) {
-            
-//             const t0 = Date.now();
-            
-//             console.log('\n' + '🚀'.repeat(40));
-//             console.log('🚀 PROCESSING COMPLETE UTTERANCE');
-//             console.log('🚀'.repeat(40));
-//             console.log(`\n👤 Speaker: ${speakerId}`);
-//             console.log(`💬 Transcript: "${transcript}"`);
-            
-//             const t_stt_end = Date.now();
-//             console.log(`\n⏱️  [${t_stt_end - t0}ms] STT Processing Complete`);
-            
-//             // Send final transcript to frontend
-//             pusher.trigger(channel, 'transcript', {
-//               text: transcript,
-//               speaker: speakerId
-//             }).then(() => {
-//               console.log(`✅ Transcript sent to frontend via Pusher`);
-//             }).catch(err => {
-//               console.error('❌ Pusher error:', err);
-//             });
-            
-//             console.log('\n📚 ADDING TO CONVERSATION HISTORY:');
-//             console.log(`   Before: ${conversationHistory.get(sessionId)?.length || 0} messages`);
-            
-//             // Add to conversation history with speaker label
-//             addToHistory(sessionId, speakerId, transcript);
-            
-//             console.log(`   After: ${conversationHistory.get(sessionId)?.length || 0} messages`);
-//             console.log('\n📋 CURRENT CONVERSATION HISTORY:');
-//             const history = conversationHistory.get(sessionId) || [];
-//             history.forEach((msg, idx) => {
-//               console.log(`   [${idx + 1}] ${msg.speaker}: "${msg.content}"`);
-//             });
-            
-//             console.log('\n🤖 SENDING TO LLM FOR DECISION...');
-//             console.log('-'.repeat(80));
-            
-//             // Send to LLM with full context (LLM decides whether to respond)
-//             processWithLLMContextAware(sessionId, t0);
-            
-//             lastProcessedTranscript = transcript;
-            
-//           } else {
-//             console.log('\n⚠️  DUPLICATE TRANSCRIPT DETECTED - SKIPPING');
-//             console.log(`   Transcript: "${transcript}"`);
-//           }
-//         } else {
-//           // Show why we're not processing
-//           if (!data.is_final) {
-//             console.log('⏳ Not confident yet (is_final: false)');
-//           } else if (!data.speech_final) {
-//             console.log('⏳ User still speaking (speech_final: false)');
-//           }
-//         }
+//        // Only process when BOTH is_final AND speech_final are true
+// if (data.is_final && data.speech_final) {
+  
+//   // Prevent duplicate processing
+//   if (transcript !== lastProcessedTranscript) {
+    
+//     const t0 = Date.now();
+    
+//     console.log('\n' + '🚀'.repeat(40));
+//     console.log('🚀 PROCESSING COMPLETE UTTERANCE (NORMAL PATH)');
+//     console.log('🚀'.repeat(40));
+//     console.log(`\n👤 Speaker: ${speakerId}`);
+//     console.log(`💬 Transcript: "${transcript}"`);
+    
+//     const t_stt_end = Date.now();
+//     console.log(`\n⏱️  [${t_stt_end - t0}ms] STT Processing Complete`);
+    
+//     // Send final transcript to frontend
+//     pusher.trigger(channel, 'transcript', {
+//       text: transcript,
+//       speaker: speakerId
+//     }).then(() => {
+//       console.log(`✅ Transcript sent to frontend via Pusher`);
+//     }).catch(err => {
+//       console.error('❌ Pusher error:', err);
+//     });
+    
+//     console.log('\n📚 ADDING TO CONVERSATION HISTORY:');
+//     console.log(`   Before: ${conversationHistory.get(sessionId)?.length || 0} messages`);
+    
+//     // Add to conversation history with speaker label
+//     addToHistory(sessionId, speakerId, transcript);
+    
+//     console.log(`   After: ${conversationHistory.get(sessionId)?.length || 0} messages`);
+//     console.log('\n📋 CURRENT CONVERSATION HISTORY:');
+//     const history = conversationHistory.get(sessionId) || [];
+//     history.forEach((msg, idx) => {
+//       console.log(`   [${idx + 1}] ${msg.speaker}: "${msg.content}"`);
+//     });
+    
+//     console.log('\n🤖 SENDING TO LLM FOR DECISION...');
+//     console.log('-'.repeat(80));
+    
+//     // Send to LLM with full context (LLM decides whether to respond)
+//     processWithLLMContextAware(sessionId, t0);
+    
+//     lastProcessedTranscript = transcript;
+    
+//   } else {
+//     console.log('\n⚠️  DUPLICATE TRANSCRIPT DETECTED - SKIPPING');
+//     console.log(`   Transcript: "${transcript}"`);
+//   }
+// }
+// // NEW: Check if sentence is complete when is_final but NOT speech_final
+// else if (data.is_final && !data.speech_final) {
+  
+//   console.log('\n' + '⚠️'.repeat(40));
+//   console.log('⚠️  STUCK DETECTION: is_final=true BUT speech_final=false');
+//   console.log('⚠️'.repeat(40));
+//   console.log(`\n👤 Speaker: ${speakerId}`);
+//   console.log(`💬 Transcript: "${transcript}"`);
+//   console.log(`⏱️  Waiting for speech_final, but calling GPT to check if complete...`);
+  
+//   // Check if this transcript was already checked
+//   if (transcript !== lastProcessedTranscript) {
+    
+//     const t_gpt_start = Date.now();
+//     console.log(`\n🔍 CALLING GPT TO CHECK SENTENCE COMPLETENESS...`);
+//     console.log(`   Model: openai/gpt-oss-20b`);
+//     console.log(`   Transcript to check: "${transcript}"`);
+    
+//     try {
+//       const isComplete = await checkIfSentenceComplete(transcript, t_gpt_start);
+      
+//       const t_gpt_end = Date.now();
+//       console.log(`\n⏱️  [${t_gpt_end - t_gpt_start}ms] GPT Check Complete`);
+//       console.log(`📊 Result: ${isComplete ? 'COMPLETE ✅' : 'INCOMPLETE ❌'}`);
+      
+//       if (isComplete) {
+//         console.log('\n✅ GPT CONFIRMED: Sentence is COMPLETE');
+//         console.log('   🔄 OVERRIDING speech_final → true');
+//         console.log('   🚀 Processing as complete utterance...\n');
+        
+//         const t0 = Date.now();
+        
+//         // Send final transcript to frontend
+//         pusher.trigger(channel, 'transcript', {
+//           text: transcript,
+//           speaker: speakerId
+//         }).then(() => {
+//           console.log(`✅ Transcript sent to frontend via Pusher`);
+//         }).catch(err => {
+//           console.error('❌ Pusher error:', err);
+//         });
+        
+//         console.log('\n📚 ADDING TO CONVERSATION HISTORY:');
+//         console.log(`   Before: ${conversationHistory.get(sessionId)?.length || 0} messages`);
+        
+//         // Add to conversation history
+//         addToHistory(sessionId, speakerId, transcript);
+        
+//         console.log(`   After: ${conversationHistory.get(sessionId)?.length || 0} messages`);
+        
+//         console.log('\n🤖 SENDING TO LLM FOR DECISION...');
+//         console.log('-'.repeat(80));
+        
+//         // Process with Llama LLM
+//         processWithLLMContextAware(sessionId, t0);
+        
+//         lastProcessedTranscript = transcript;
+        
+//       } else {
+//         console.log('\n❌ GPT CONFIRMED: Sentence is INCOMPLETE');
+//         console.log('   ⏳ Keeping speech_final as false');
+//         console.log('   ⏳ Waiting for more audio from user...\n');
+//       }
+      
+//     } catch (error) {
+//       console.error('\n❌ GPT CHECK ERROR:', error.message);
+//       console.log('   ⚠️  Falling back to waiting for speech_final');
+//       console.log('   ⏳ Will wait for next transcript...\n');
+//     }
+    
+//   } else {
+//     console.log('\n⚠️  Already checked this transcript, skipping GPT call');
+//   }
+  
+// } else {
+//   // Show why we're not processing
+//   if (!data.is_final) {
+//     console.log('⏳ Not confident yet (is_final: false)');
+//   } else if (!data.speech_final) {
+//     console.log('⏳ User still speaking (speech_final: false)');
+//   }
+// }
 //       }
 //     });
     
@@ -557,8 +919,6 @@
 
 // module.exports = app;
 
-
-
 const express = require('express');
 const cors = require('cors');
 const Pusher = require('pusher');
@@ -566,6 +926,7 @@ const WebSocket = require('ws');
 require('dotenv').config();
 const { createClient } = require('@deepgram/sdk');
 const Groq = require('groq-sdk');
+const { google } = require('googleapis');
 
 const app = express();
 
@@ -591,9 +952,18 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const DEEPGRAM_API_KEY = process.env.DEEPGRAM_API_KEY;
+const RECALL_API_KEY = process.env.RECALL_API_KEY || "15e68e37c50c76af96d19788f7a9408d0ec908b1";
+const PUBLIC_URL = process.env.PUBLIC_URL || 'https://zoom-bot-pgyj.onrender.com';
+
+// Google Calendar Setup
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
+const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI;
+const GOOGLE_REFRESH_TOKEN = process.env.GOOGLE_REFRESH_TOKEN;
 
 console.log('🔑 Groq API Key present:', !!GROQ_API_KEY);
 console.log('🔑 Deepgram API Key present:', !!DEEPGRAM_API_KEY);
+console.log('🔑 Google OAuth present:', !!GOOGLE_CLIENT_ID && !!GOOGLE_REFRESH_TOKEN);
 
 const groq = new Groq({
   apiKey: GROQ_API_KEY
@@ -602,9 +972,27 @@ const groq = new Groq({
 const deepgram = createClient(DEEPGRAM_API_KEY);
 console.log('🎙️ Deepgram client initialized');
 
+// Setup Google Calendar
+const oauth2Client = new google.auth.OAuth2(
+  GOOGLE_CLIENT_ID,
+  GOOGLE_CLIENT_SECRET,
+  GOOGLE_REDIRECT_URI
+);
+
+oauth2Client.setCredentials({
+  refresh_token: GOOGLE_REFRESH_TOKEN
+});
+
+const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+console.log('📅 Google Calendar client initialized');
+
 const deepgramConnections = new Map();
 const audioResponses = new Map();
 const conversationHistory = new Map();
+
+// Store active calendar channel info
+let calendarChannelId = null;
+let calendarResourceId = null;
 
 // Helper function to add messages to conversation history with speaker labels
 function addToHistory(sessionId, speaker, message) {
@@ -809,174 +1197,6 @@ IMPORTANT:
   }
 }
 
-
-// async function processWithLLMContextAware(sessionId, t0) {
-//   try {
-//     if (!conversationHistory.has(sessionId)) {
-//       conversationHistory.set(sessionId, []);
-//     }
-    
-//     const history = conversationHistory.get(sessionId);
-    
-//     // Build conversation context with speaker labels
-//     const conversationContext = history.map(msg => {
-//       return `${msg.speaker}: ${msg.content}`;
-//     }).join('\n');
-    
-//     const t_llm_start = Date.now();
-    
-//     console.log('\n' + '🤖'.repeat(40));
-//     console.log('🤖 LLM CONTEXT-AWARE PROCESSING (GPT-OSS-20B)');
-//     console.log('🤖'.repeat(40));
-//     console.log(`\n⏱️  [${t_llm_start - t0}ms] GPT-OSS-20B Request Starting...`);
-//     console.log('🧠 Model: GPT-OSS-20B (OpenAI via Groq)');
-    
-//     console.log('\n📜 CONVERSATION CONTEXT SENT TO LLM:');
-//     console.log('┌' + '─'.repeat(78) + '┐');
-//     if (conversationContext.length > 0) {
-//       conversationContext.split('\n').forEach(line => {
-//         console.log('│ ' + line.padEnd(77) + '│');
-//       });
-//     } else {
-//       console.log('│ ' + '(No conversation history yet)'.padEnd(77) + '│');
-//     }
-//     console.log('└' + '─'.repeat(78) + '┘');
-    
-//     console.log('\n📊 CONTEXT STATS:');
-//     console.log(`   Total messages in context: ${history.length}`);
-//     console.log(`   Context length: ${conversationContext.length} characters`);
-    
-//     // Single call: Decision + Response in JSON format
-//     const response = await groq.chat.completions.create({
-//       messages: [
-//         {
-//           role: 'system',
-//           content: 'You are an AI Assistant analyzer. Respond ONLY with valid JSON.'
-//         },
-//         {
-//           role: 'user',
-//           content: `Analyze this conversation and decide if you should respond. If yes, provide response.
-
-// Conversation:
-// ${conversationContext}
-
-// Rules:
-// - Respond if someone says "bot", "assistant", or "AI"
-// - Respond if it's a follow-up after you just spoke
-// - Stay silent if people talking to each other
-// - Keep responses under 12 words
-
-// Respond with ONLY this JSON format (no extra text):
-
-// If should respond:
-// {
-//   "should_respond": true,
-//   "response": "your short response here"
-// }
-
-// If should NOT respond:
-// {
-//   "should_respond": false,
-//   "response": ""
-// }`
-//         }
-//       ],
-//       model: 'openai/gpt-oss-20b',
-//       temperature: 0.5,
-//       max_completion_tokens: 100,
-//       top_p: 0.8,
-//       stream: false,
-//       reasoning_effort: 'low',
-//       stop: null
-//     });
-    
-//     const responseText = response.choices[0]?.message?.content || "";
-    
-//     console.log('\n📥 Raw GPT Response:', responseText);
-    
-//     // Parse JSON response
-//     let jsonResponse;
-//     try {
-//       jsonResponse = JSON.parse(responseText.trim());
-//       console.log('📊 Parsed JSON:', JSON.stringify(jsonResponse, null, 2));
-//     } catch (parseError) {
-//       console.error('❌ JSON Parse Error:', parseError.message);
-//       console.log('   Raw text:', responseText);
-//       // Fallback: treat as should not respond
-//       console.log('   Fallback: Treating as SILENT due to parse error');
-      
-//       const channel = `session-${sessionId}`;
-//       pusher.trigger(channel, 'bot-silent', {
-//         message: 'Bot is listening but not responding'
-//       }).catch(err => console.error('Pusher error:', err));
-      
-//       return;
-//     }
-    
-//     const t_llm_end = Date.now();
-//     console.log(`\n⏱️  [${t_llm_end - t0}ms] GPT Response Received`);
-//     console.log(`⏱️  GPT took: ${t_llm_end - t_llm_start}ms ⚡`);
-    
-//     const shouldRespond = jsonResponse.should_respond || false;
-//     const llmResponse = jsonResponse.response || "";
-    
-//     console.log('\n💭 LLM DECISION:');
-//     console.log('┌' + '─'.repeat(78) + '┐');
-//     console.log('│ Should Respond: ' + (shouldRespond ? 'YES ✅' : 'NO ❌').padEnd(60) + '│');
-//     if (shouldRespond) {
-//       console.log('│ Response: ' + llmResponse.substring(0, 68).padEnd(68) + '│');
-//     }
-//     console.log('└' + '─'.repeat(78) + '┘');
-    
-//     if (!shouldRespond) {
-//       console.log('\n🤫 DECISION: STAY SILENT');
-//       console.log('   Action: No speech generation');
-      
-//       const channel = `session-${sessionId}`;
-//       pusher.trigger(channel, 'bot-silent', {
-//         message: 'Bot is listening but not responding'
-//       }).catch(err => console.error('Pusher error:', err));
-      
-//       console.log('   ✅ Sent "bot-silent" event to frontend');
-//       console.log('\n' + '='.repeat(80) + '\n');
-      
-//       return;
-//     }
-    
-//     // Should respond - use the generated response
-//     console.log('\n✅ DECISION: RESPOND');
-//     console.log(`   Response: "${llmResponse}"`);
-//     console.log('   Action: Generate speech and send to user');
-    
-//     const channel = `session-${sessionId}`;
-    
-//     await pusher.trigger(channel, 'ai-response', {
-//       text: llmResponse
-//     });
-//     console.log('   ✅ Sent AI response to frontend via Pusher');
-    
-//     console.log('\n📚 UPDATING CONVERSATION HISTORY:');
-//     console.log(`   Before: ${history.length} messages`);
-    
-//     addToHistory(sessionId, 'AI Assistant', llmResponse);
-    
-//     console.log(`   After: ${conversationHistory.get(sessionId).length} messages`);
-//     console.log(`   Added: AI Assistant: "${llmResponse}"`);
-    
-//     console.log('\n🔊 STARTING TEXT-TO-SPEECH CONVERSION...');
-//     console.log('-'.repeat(80));
-    
-//     await convertToSpeech(sessionId, llmResponse, t0);
-    
-//     console.log('\n' + '='.repeat(80) + '\n');
-    
-//   } catch (error) {
-//     console.error('\n❌ LLM ERROR:', error.message);
-//     console.error('Full error:', error);
-//     console.log('\n' + '='.repeat(80) + '\n');
-//   }
-// }
-
 async function convertToSpeech(sessionId, text, t0) {
   try {
     const t_tts_start = Date.now();
@@ -1066,7 +1286,7 @@ Rules:
       temperature: 0.1,
       max_completion_tokens: 500,
       top_p: 0.5,
-      stream: false,              // ← IMPORTANT: Set to false
+      stream: false,
       reasoning_effort: "low",
       stop: null
     });
@@ -1083,14 +1303,12 @@ Rules:
     } catch (parseError) {
       console.error('❌ JSON Parse Error:', parseError.message);
       console.log('   Raw text that failed to parse:', responseText);
-      // Fallback: check if response contains the word COMPLETE
       const isComplete = responseText.toUpperCase().includes('COMPLETE') && 
                         !responseText.toUpperCase().includes('INCOMPLETE');
       console.log('   Using text fallback → ', isComplete ? 'COMPLETE' : 'INCOMPLETE');
       return isComplete;
     }
     
-    // Extract status from JSON
     const status = jsonResponse.status || "";
     const isComplete = status.toUpperCase() === "COMPLETE";
     
@@ -1106,27 +1324,280 @@ Rules:
   } catch (error) {
     console.error('❌ Error checking sentence completeness:', error.message);
     console.error('Full error:', error);
-    // On error, assume COMPLETE (better to respond than get stuck)
     console.log('⚠️  Error fallback: Treating as COMPLETE');
     return true;
   }
 }
+
+// ============================================================
+// CALENDAR INTEGRATION FUNCTIONS
+// ============================================================
+
+// Extract meeting URL from calendar event
+function extractMeetingUrl(event) {
+  let meetingUrl = null;
+  
+  // Priority 1: Google Meet hangout link
+  if (event.hangoutLink) {
+    meetingUrl = event.hangoutLink;
+    console.log('   📹 Found Google Meet link');
+    return meetingUrl;
+  }
+  
+  // Priority 2: Zoom link in location
+  if (event.location) {
+    const zoomMatch = event.location.match(/https:\/\/[^\s]+zoom\.us\/[^\s]+/);
+    if (zoomMatch) {
+      meetingUrl = zoomMatch[0];
+      console.log('   📹 Found Zoom link in location');
+      return meetingUrl;
+    }
+    
+    if (event.location.startsWith('http://') || event.location.startsWith('https://')) {
+      meetingUrl = event.location;
+      console.log('   📹 Found direct URL in location');
+      return meetingUrl;
+    }
+  }
+  
+  // Priority 3: Meeting link in description
+  if (event.description) {
+    const zoomMatch = event.description.match(/https:\/\/[^\s<]+zoom\.us\/[^\s<]+/);
+    if (zoomMatch) {
+      meetingUrl = zoomMatch[0];
+      console.log('   📹 Found Zoom link in description');
+      return meetingUrl;
+    }
+    
+    const meetMatch = event.description.match(/https:\/\/meet\.google\.com\/[^\s<]+/);
+    if (meetMatch) {
+      meetingUrl = meetMatch[0];
+      console.log('   📹 Found Google Meet link in description');
+      return meetingUrl;
+    }
+    
+    const teamsMatch = event.description.match(/https:\/\/teams\.microsoft\.com\/[^\s<]+/);
+    if (teamsMatch) {
+      meetingUrl = teamsMatch[0];
+      console.log('   📹 Found Teams link in description');
+      return meetingUrl;
+    }
+  }
+  
+  console.log('   ❌ No meeting URL found');
+  return null;
+}
+
+// Deploy bot to meeting
+async function deployBotToMeeting(meetingUrl, eventTitle, eventId) {
+  try {
+    console.log('\n🤖 Deploying bot to meeting...');
+    console.log('   Meeting URL:', meetingUrl);
+    console.log('   Event:', eventTitle);
+    
+    const clientUrl = "https://zoom-bot-jet.vercel.app";
+    const serverUrl = "zoom-bot-pgyj.onrender.com";
+    
+    const botConfig = {
+      meeting_url: meetingUrl,
+      bot_name: "AI Voice Assistant",
+      output_media: {
+        camera: {
+          kind: "webpage",
+          config: {
+            url: `${clientUrl}?server=https://${serverUrl}`
+          }
+        }
+      },
+      variant: {
+        zoom: "web_4_core"
+      }
+    };
+    
+    const response = await fetch('https://api.recall.ai/api/v1/bot/', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Token ${RECALL_API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(botConfig)
+    });
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Recall API error: ${response.status} - ${errorText}`);
+    }
+    
+    const result = await response.json();
+    
+    console.log('✅ Bot deployed successfully!');
+    console.log('   Bot ID:', result.id);
+    console.log('   Status:', result.status);
+    
+    return result;
+    
+  } catch (error) {
+    console.error('❌ Bot deployment error:', error.message);
+    throw error;
+  }
+}
+
+// Process calendar event
+async function processCalendarEvent(eventId) {
+  try {
+    console.log('\n' + '='.repeat(80));
+    console.log('📅 PROCESSING CALENDAR EVENT');
+    console.log('='.repeat(80));
+    console.log('   Event ID:', eventId);
+    
+    const event = await calendar.events.get({
+      calendarId: 'primary',
+      eventId: eventId
+    });
+    
+    const eventData = event.data;
+    const eventTitle = eventData.summary || 'Untitled Meeting';
+    const startTime = eventData.start?.dateTime || eventData.start?.date;
+    const endTime = eventData.end?.dateTime || eventData.end?.date;
+    
+    console.log('\n📋 EVENT DETAILS:');
+    console.log('   Title:', eventTitle);
+    console.log('   Start:', startTime);
+    console.log('   End:', endTime);
+    console.log('   Organizer:', eventData.organizer?.email);
+    
+    if (eventData.status === 'cancelled') {
+      console.log('   ⚠️  Event is cancelled, skipping...');
+      return;
+    }
+    
+    console.log('\n🔍 SEARCHING FOR MEETING LINK...');
+    const meetingUrl = extractMeetingUrl(eventData);
+    
+    if (!meetingUrl) {
+      console.log('   ℹ️  No meeting link found - regular calendar event');
+      console.log('='.repeat(80) + '\n');
+      return;
+    }
+    
+    const now = new Date();
+    const meetingStart = new Date(startTime);
+    const meetingEnd = new Date(endTime);
+    
+    console.log('\n⏰ TIMING CHECK:');
+    console.log('   Current time:', now.toISOString());
+    console.log('   Meeting start:', meetingStart.toISOString());
+    console.log('   Time until meeting:', Math.round((meetingStart - now) / 1000 / 60), 'minutes');
+    
+    // Join 2 minutes before meeting
+    const joinTime = new Date(meetingStart.getTime() - 2 * 60 * 1000);
+    
+    if (now >= joinTime && now <= meetingEnd) {
+      console.log('   ✅ Meeting is starting soon or in progress - joining now!');
+      await deployBotToMeeting(meetingUrl, eventTitle, eventId);
+    } else if (now < joinTime) {
+      const waitTime = joinTime - now;
+      console.log(`   ⏳ Scheduling bot to join in ${Math.round(waitTime / 1000 / 60)} minutes`);
+      
+      setTimeout(async () => {
+        console.log('   ⏰ Time to join meeting!');
+        await deployBotToMeeting(meetingUrl, eventTitle, eventId);
+      }, waitTime);
+    } else {
+      console.log('   ⚠️  Meeting has already ended');
+    }
+    
+    console.log('='.repeat(80) + '\n');
+    
+  } catch (error) {
+    console.error('❌ Error processing event:', error.message);
+    console.log('='.repeat(80) + '\n');
+  }
+}
+
+// Start watching calendar
+async function startCalendarWatch() {
+  try {
+    calendarChannelId = 'bot-calendar-' + Date.now();
+    
+    console.log('\n📡 Starting Calendar Watch...');
+    console.log('   Webhook URL:', `${PUBLIC_URL}/api/calendar-webhook`);
+    console.log('   Channel ID:', calendarChannelId);
+    
+    const response = await calendar.events.watch({
+      calendarId: 'primary',
+      requestBody: {
+        id: calendarChannelId,
+        type: 'web_hook',
+        address: `${PUBLIC_URL}/api/calendar-webhook`,
+        expiration: Date.now() + (7 * 24 * 60 * 60 * 1000)
+      }
+    });
+    
+    calendarResourceId = response.data.resourceId;
+    
+    console.log('✅ Calendar watch started successfully!');
+    console.log('   Resource ID:', calendarResourceId);
+    console.log('   Expires:', new Date(parseInt(response.data.expiration)));
+    
+    // Auto-renew before expiration
+    setTimeout(() => {
+      console.log('🔄 Renewing calendar watch...');
+      stopCalendarWatch().then(() => startCalendarWatch());
+    }, 6.5 * 24 * 60 * 60 * 1000);
+    
+  } catch (error) {
+    console.error('❌ Calendar watch error:', error.message);
+    if (error.response) {
+      console.error('   Response:', error.response.data);
+    }
+  }
+}
+
+// Stop watching calendar
+async function stopCalendarWatch() {
+  if (!calendarChannelId || !calendarResourceId) {
+    console.log('⚠️  No active calendar watch to stop');
+    return;
+  }
+  
+  try {
+    await calendar.channels.stop({
+      requestBody: {
+        id: calendarChannelId,
+        resourceId: calendarResourceId
+      }
+    });
+    console.log('🛑 Calendar watch stopped');
+  } catch (error) {
+    console.error('❌ Error stopping calendar watch:', error.message);
+  }
+}
+
+// ============================================================
+// API ENDPOINTS
+// ============================================================
+
 app.get('/', (req, res) => {
   res.json({ 
-    message: 'Zoom Voice Bot with Llama + Nova-3', 
+    message: 'Zoom Voice Bot with Calendar Integration', 
     status: 'running',
     features: {
       stt: 'Deepgram Nova-3',
       llm: 'Groq Llama 4 Maverick',
       tts: 'Deepgram Aura',
       diarization: 'enabled',
-      contextAware: 'enabled'
+      contextAware: 'enabled',
+      calendarIntegration: 'enabled'
     },
     endpoints: {
       health: '/api/health',
       connect: '/api/connect',
       sendAudio: '/api/send-audio',
-      getAudio: '/api/get-audio/:sessionId'
+      getAudio: '/api/get-audio/:sessionId',
+      calendarWebhook: '/api/calendar-webhook',
+      calendarCheck: '/api/trigger-calendar-check',
+      calendarWatch: '/api/calendar-watch/start'
     }
   });
 });
@@ -1136,12 +1607,119 @@ app.get('/api/health', (req, res) => {
     status: 'ok', 
     connections: deepgramConnections.size,
     timestamp: new Date().toISOString(),
+    calendarWatch: {
+      active: !!calendarChannelId,
+      channelId: calendarChannelId
+    },
     models: {
       stt: 'nova-3',
       llm: 'llama-4-maverick-17b',
       tts: 'aura-asteria-en'
     }
   });
+});
+
+// Calendar webhook endpoint
+app.post('/api/calendar-webhook', async (req, res) => {
+  try {
+    const resourceState = req.headers['x-goog-resource-state'];
+    const resourceId = req.headers['x-goog-resource-id'];
+    const channelId = req.headers['x-goog-channel-id'];
+    
+    console.log('\n📬 Calendar webhook received:');
+    console.log('   State:', resourceState);
+    console.log('   Resource ID:', resourceId);
+    console.log('   Channel ID:', channelId);
+    
+    res.status(200).send('OK');
+    
+    if (resourceState === 'exists') {
+      console.log('   📅 Event created or updated');
+      
+      const now = new Date();
+      const fiveMinutesAgo = new Date(now.getTime() - 5 * 60 * 1000);
+      
+      const events = await calendar.events.list({
+        calendarId: 'primary',
+        timeMin: fiveMinutesAgo.toISOString(),
+        maxResults: 10,
+        singleEvents: true,
+        orderBy: 'updated'
+      });
+      
+      for (const event of events.data.items) {
+        await processCalendarEvent(event.id);
+      }
+      
+    } else if (resourceState === 'sync') {
+      console.log('   🔄 Initial sync notification');
+    }
+    
+  } catch (error) {
+    console.error('❌ Webhook error:', error.message);
+    res.status(200).send('OK');
+  }
+});
+
+// Manual calendar check endpoint
+app.post('/api/trigger-calendar-check', async (req, res) => {
+  try {
+    console.log('\n🔍 Manual calendar check triggered...');
+    
+    const now = new Date();
+    const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+    
+    const events = await calendar.events.list({
+      calendarId: 'primary',
+      timeMin: now.toISOString(),
+      timeMax: tomorrow.toISOString(),
+      maxResults: 10,
+      singleEvents: true,
+      orderBy: 'startTime'
+    });
+    
+    console.log(`   Found ${events.data.items.length} upcoming events`);
+    
+    const results = [];
+    for (const event of events.data.items) {
+      const meetingUrl = extractMeetingUrl(event);
+      results.push({
+        title: event.summary,
+        start: event.start?.dateTime || event.start?.date,
+        hasMeetingLink: !!meetingUrl,
+        meetingUrl: meetingUrl
+      });
+    }
+    
+    res.json({
+      success: true,
+      upcomingMeetings: results
+    });
+    
+  } catch (error) {
+    console.error('❌ Manual check error:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Start calendar watch endpoint
+app.post('/api/calendar-watch/start', async (req, res) => {
+  try {
+    await startCalendarWatch();
+    res.json({ success: true, message: 'Calendar watch started' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Stop calendar watch endpoint
+app.post('/api/calendar-watch/stop', async (req, res) => {
+  try {
+    await stopCalendarWatch();
+    res.json({ success: true, message: 'Calendar watch stopped' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 app.post('/api/connect', async (req, res) => {
@@ -1167,8 +1745,8 @@ app.post('/api/connect', async (req, res) => {
       sample_rate: 24000,
       channels: 1,
       endpointing: 700,
-      diarize: true,        // ← ENABLED: Speaker identification
-      punctuate: true       // ← Better formatting
+      diarize: true,
+      punctuate: true
     });
     
     let lastProcessedTranscript = '';
@@ -1184,7 +1762,6 @@ app.post('/api/connect', async (req, res) => {
       
       if (transcript && transcript.length > 0) {
         
-        // Extract speaker ID from diarization
         let speakerId = "Unknown";
         let speakerNumber = null;
         
@@ -1206,7 +1783,6 @@ app.post('/api/connect', async (req, res) => {
             speakerNumber = firstWord.speaker;
           }
           
-          // Show all unique speakers in this utterance
           const allSpeakers = data.channel.alternatives[0].words.map(w => w.speaker).filter(s => s !== undefined);
           const uniqueSpeakers = [...new Set(allSpeakers)];
           console.log('   Unique speakers in utterance:', uniqueSpeakers);
@@ -1238,7 +1814,6 @@ app.post('/api/connect', async (req, res) => {
         
         const channel = `session-${sessionId}`;
         
-        // Send interim transcripts to frontend
         pusher.trigger(channel, 'transcript-interim', {
           text: transcript,
           speaker: speakerId,
@@ -1246,10 +1821,8 @@ app.post('/api/connect', async (req, res) => {
           speech_final: data.speech_final
         }).catch(err => console.error('Pusher error:', err));
         
-       // Only process when BOTH is_final AND speech_final are true
 if (data.is_final && data.speech_final) {
   
-  // Prevent duplicate processing
   if (transcript !== lastProcessedTranscript) {
     
     const t0 = Date.now();
@@ -1263,7 +1836,6 @@ if (data.is_final && data.speech_final) {
     const t_stt_end = Date.now();
     console.log(`\n⏱️  [${t_stt_end - t0}ms] STT Processing Complete`);
     
-    // Send final transcript to frontend
     pusher.trigger(channel, 'transcript', {
       text: transcript,
       speaker: speakerId
@@ -1276,7 +1848,6 @@ if (data.is_final && data.speech_final) {
     console.log('\n📚 ADDING TO CONVERSATION HISTORY:');
     console.log(`   Before: ${conversationHistory.get(sessionId)?.length || 0} messages`);
     
-    // Add to conversation history with speaker label
     addToHistory(sessionId, speakerId, transcript);
     
     console.log(`   After: ${conversationHistory.get(sessionId)?.length || 0} messages`);
@@ -1289,7 +1860,6 @@ if (data.is_final && data.speech_final) {
     console.log('\n🤖 SENDING TO LLM FOR DECISION...');
     console.log('-'.repeat(80));
     
-    // Send to LLM with full context (LLM decides whether to respond)
     processWithLLMContextAware(sessionId, t0);
     
     lastProcessedTranscript = transcript;
@@ -1299,7 +1869,6 @@ if (data.is_final && data.speech_final) {
     console.log(`   Transcript: "${transcript}"`);
   }
 }
-// NEW: Check if sentence is complete when is_final but NOT speech_final
 else if (data.is_final && !data.speech_final) {
   
   console.log('\n' + '⚠️'.repeat(40));
@@ -1309,7 +1878,6 @@ else if (data.is_final && !data.speech_final) {
   console.log(`💬 Transcript: "${transcript}"`);
   console.log(`⏱️  Waiting for speech_final, but calling GPT to check if complete...`);
   
-  // Check if this transcript was already checked
   if (transcript !== lastProcessedTranscript) {
     
     const t_gpt_start = Date.now();
@@ -1331,7 +1899,6 @@ else if (data.is_final && !data.speech_final) {
         
         const t0 = Date.now();
         
-        // Send final transcript to frontend
         pusher.trigger(channel, 'transcript', {
           text: transcript,
           speaker: speakerId
@@ -1344,7 +1911,6 @@ else if (data.is_final && !data.speech_final) {
         console.log('\n📚 ADDING TO CONVERSATION HISTORY:');
         console.log(`   Before: ${conversationHistory.get(sessionId)?.length || 0} messages`);
         
-        // Add to conversation history
         addToHistory(sessionId, speakerId, transcript);
         
         console.log(`   After: ${conversationHistory.get(sessionId)?.length || 0} messages`);
@@ -1352,7 +1918,6 @@ else if (data.is_final && !data.speech_final) {
         console.log('\n🤖 SENDING TO LLM FOR DECISION...');
         console.log('-'.repeat(80));
         
-        // Process with Llama LLM
         processWithLLMContextAware(sessionId, t0);
         
         lastProcessedTranscript = transcript;
@@ -1374,7 +1939,6 @@ else if (data.is_final && !data.speech_final) {
   }
   
 } else {
-  // Show why we're not processing
   if (!data.is_final) {
     console.log('⏳ Not confident yet (is_final: false)');
   } else if (!data.speech_final) {
@@ -1462,13 +2026,24 @@ app.use((req, res) => {
 
 const startServer = async () => {
   const PORT = process.env.PORT || 3000;
-  app.listen(PORT, () => {
+  app.listen(PORT, async () => {
     console.log(`\n⚡ Server running on http://localhost:${PORT}`);
     console.log(`🦙 LLM: Groq Llama 4 Maverick 17B`);
     console.log(`🎙️  STT: Deepgram Nova-3 (with Diarization)`);
     console.log(`🔊 TTS: Deepgram Aura`);
     console.log(`👥 Speaker Awareness: Enabled`);
-    console.log(`🧠 Context-Aware Decisions: Enabled\n`);
+    console.log(`🧠 Context-Aware Decisions: Enabled`);
+    console.log(`📅 Calendar Integration: Enabled`);
+    
+    console.log(`\n📡 Starting Calendar Watch...`);
+    try {
+      await startCalendarWatch();
+    } catch (error) {
+      console.error('❌ Calendar watch startup failed:', error.message);
+      console.log('   You can manually start it via: POST /api/calendar-watch/start');
+    }
+    
+    console.log('\n');
   });
 };
 
