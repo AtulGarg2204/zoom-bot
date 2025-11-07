@@ -1414,7 +1414,7 @@ async function deployBotToMeeting(meetingUrl, eventTitle, eventId) {
       }
     };
     
-    const response = await fetch('https://api.recall.ai/api/v1/bot/', {
+    const response = await fetch('https://us-west-2.recall.ai/api/v1/bot/', {
       method: 'POST',
       headers: {
         'Authorization': `Token ${RECALL_API_KEY}`,
