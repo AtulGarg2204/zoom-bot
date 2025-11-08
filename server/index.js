@@ -918,7 +918,6 @@
 // }
 
 // module.exports = app;
-
 const express = require('express');
 const cors = require('cors');
 const Pusher = require('pusher');
@@ -989,6 +988,7 @@ console.log('📅 Google Calendar client initialized');
 const deepgramConnections = new Map();
 const audioResponses = new Map();
 const conversationHistory = new Map();
+const processedEvents = new Map(); // NEW: Track processed events
 
 // Store active calendar channel info
 let calendarChannelId = null;
@@ -1414,6 +1414,7 @@ async function deployBotToMeeting(meetingUrl, eventTitle, eventId) {
       }
     };
     
+    // UPDATED: Use us-west-2 region
     const response = await fetch('https://us-west-2.recall.ai/api/v1/bot/', {
       method: 'POST',
       headers: {
@@ -1442,9 +1443,18 @@ async function deployBotToMeeting(meetingUrl, eventTitle, eventId) {
   }
 }
 
-// Process calendar event
+// Process calendar event - UPDATED with duplicate prevention
 async function processCalendarEvent(eventId) {
   try {
+    // Check if we've already processed this event
+    if (processedEvents.has(eventId)) {
+      console.log(`⚠️  Event ${eventId} already processed - skipping duplicate`);
+      return;
+    }
+    
+    // Mark event as being processed
+    processedEvents.set(eventId, { status: 'processing', timestamp: Date.now() });
+    
     console.log('\n' + '='.repeat(80));
     console.log('📅 PROCESSING CALENDAR EVENT');
     console.log('='.repeat(80));
@@ -1468,6 +1478,7 @@ async function processCalendarEvent(eventId) {
     
     if (eventData.status === 'cancelled') {
       console.log('   ⚠️  Event is cancelled, skipping...');
+      processedEvents.set(eventId, { status: 'cancelled', timestamp: Date.now() });
       return;
     }
     
@@ -1476,6 +1487,7 @@ async function processCalendarEvent(eventId) {
     
     if (!meetingUrl) {
       console.log('   ℹ️  No meeting link found - regular calendar event');
+      processedEvents.set(eventId, { status: 'no_link', timestamp: Date.now() });
       console.log('='.repeat(80) + '\n');
       return;
     }
@@ -1495,22 +1507,40 @@ async function processCalendarEvent(eventId) {
     if (now >= joinTime && now <= meetingEnd) {
       console.log('   ✅ Meeting is starting soon or in progress - joining now!');
       await deployBotToMeeting(meetingUrl, eventTitle, eventId);
+      processedEvents.set(eventId, { status: 'joined', timestamp: Date.now() });
     } else if (now < joinTime) {
       const waitTime = joinTime - now;
       console.log(`   ⏳ Scheduling bot to join in ${Math.round(waitTime / 1000 / 60)} minutes`);
       
-      setTimeout(async () => {
+      // Store the timeout ID so we can cancel duplicates
+      const timeoutId = setTimeout(async () => {
+        // Double-check we haven't already joined
+        const eventStatus = processedEvents.get(eventId);
+        if (eventStatus && eventStatus.status === 'joined') {
+          console.log('   ⚠️  Bot already joined this meeting - cancelling duplicate join');
+          return;
+        }
+        
         console.log('   ⏰ Time to join meeting!');
         await deployBotToMeeting(meetingUrl, eventTitle, eventId);
+        processedEvents.set(eventId, { status: 'joined', timestamp: Date.now() });
       }, waitTime);
+      
+      processedEvents.set(eventId, { 
+        status: 'scheduled', 
+        timestamp: Date.now(),
+        timeoutId: timeoutId 
+      });
     } else {
       console.log('   ⚠️  Meeting has already ended');
+      processedEvents.set(eventId, { status: 'ended', timestamp: Date.now() });
     }
     
     console.log('='.repeat(80) + '\n');
     
   } catch (error) {
     console.error('❌ Error processing event:', error.message);
+    processedEvents.set(eventId, { status: 'error', timestamp: Date.now() });
     console.log('='.repeat(80) + '\n');
   }
 }
@@ -1574,6 +1604,17 @@ async function stopCalendarWatch() {
   }
 }
 
+// Clean up old processed events every hour
+setInterval(() => {
+  const oneHourAgo = Date.now() - (60 * 60 * 1000);
+  for (const [eventId, data] of processedEvents.entries()) {
+    if (data.timestamp < oneHourAgo) {
+      processedEvents.delete(eventId);
+    }
+  }
+  console.log('🧹 Cleaned up old processed events. Current count:', processedEvents.size);
+}, 60 * 60 * 1000);
+
 // ============================================================
 // API ENDPOINTS
 // ============================================================
@@ -1611,6 +1652,7 @@ app.get('/api/health', (req, res) => {
       active: !!calendarChannelId,
       channelId: calendarChannelId
     },
+    processedEvents: processedEvents.size,
     models: {
       stt: 'nova-3',
       llm: 'llama-4-maverick-17b',
