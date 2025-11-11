@@ -1822,14 +1822,95 @@ async function stopCalendarWatch() {
     console.error('❌ Error stopping calendar watch:', error.message);
   }
 }
-// ============================================================
-// MEETING SUMMARY FUNCTIONS
-// ============================================================
 
 // Track bot to session/event mapping
 const botSessionMap = new Map();
 const botEventMap = new Map();
-
+// Get participants from Recall.ai after meeting ends
+async function getRecallParticipants(botId) {
+  try {
+    console.log('\n👥 FETCHING PARTICIPANTS FROM RECALL.AI');
+    console.log('   Bot ID:', botId);
+    
+    // Get bot details with recordings
+    const response = await fetch(`https://us-west-2.recall.ai/api/v1/bot/${botId}`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Token ${RECALL_API_KEY}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Recall API error: ${response.status}`);
+    }
+    
+    const botData = await response.json();
+    console.log('   ✅ Bot data retrieved');
+    
+    // Get recording ID (usually the first/only recording)
+    const recordings = botData.recordings || [];
+    if (recordings.length === 0) {
+      console.log('   ⚠️  No recordings found yet');
+      return [];
+    }
+    
+    const recordingId = recordings[0].id;
+    console.log('   Recording ID:', recordingId);
+    
+    // Get participant events for this recording
+    const participantsResponse = await fetch(
+      `https://us-west-2.recall.ai/api/v1/participant_events?recording_id=${recordingId}`,
+      {
+        method: 'GET',
+        headers: {
+          'Authorization': `Token ${RECALL_API_KEY}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+    
+    if (!participantsResponse.ok) {
+      throw new Error(`Participants API error: ${participantsResponse.status}`);
+    }
+    
+    const participantData = await participantsResponse.json();
+    
+    if (!participantData.results || participantData.results.length === 0) {
+      console.log('   ⚠️  No participant events found');
+      return [];
+    }
+    
+    // Get participants download URL
+    const participantsDownloadUrl = participantData.results[0].data?.participants_download_url;
+    
+    if (!participantsDownloadUrl) {
+      console.log('   ⚠️  No participants download URL found');
+      return [];
+    }
+    
+    console.log('   📥 Downloading participants data...');
+    
+    // Download participants JSON
+    const participantsJsonResponse = await fetch(participantsDownloadUrl);
+    const participants = await participantsJsonResponse.json();
+    
+    console.log('   ✅ Participants retrieved:', participants.length);
+    
+    // Extract emails (participants may have email field)
+    const emails = participants
+      .filter(p => p.email)
+      .map(p => p.email);
+    
+    console.log('   📧 Emails found:', emails);
+    
+    return emails;
+    
+  } catch (error) {
+    console.error('   ❌ Error fetching Recall participants:', error.message);
+    return [];
+  }
+}
 async function sendSummaryViaN8n(eventId, sessionId) {
   try {
     console.log('\n📧 SENDING MEETING SUMMARY VIA N8N');
@@ -1888,23 +1969,40 @@ async function sendSummaryViaN8n(eventId, sessionId) {
     
     const meetingTitle = event.data.summary || 'Meeting';
     const meetingDate = event.data.start?.dateTime || event.data.start?.date;
-    const participantEmails = event.data.attendees
-      ?.filter(attendee => attendee.email)
-      .map(attendee => attendee.email) || [];
-    
-    console.log(`📧 Found ${participantEmails.length} participants`);
-    console.log('   Emails:', participantEmails.join(', '));
-    
-    if (participantEmails.length === 0) {
-      console.log('⚠️  No participants with emails found');
-      return;
-    }
     
     // Calculate duration
     const startTime = new Date(event.data.start?.dateTime);
     const endTime = new Date(event.data.end?.dateTime);
     const durationMinutes = Math.round((endTime - startTime) / 1000 / 60);
     const duration = `${durationMinutes} minutes`;
+    
+    // Get bot ID from the mapping
+    console.log('\n👥 Getting actual meeting participants from Recall.ai...');
+    let botId = null;
+    for (const [bid, sid] of botSessionMap.entries()) {
+      if (sid === sessionId) {
+        botId = bid;
+        break;
+      }
+    }
+    
+    if (!botId) {
+      console.log('❌ Could not find bot ID for this session');
+      return;
+    }
+    
+    // Fetch participants from Recall.ai
+    const participantEmails = await getRecallParticipants(botId);
+    
+    console.log(`📧 Found ${participantEmails.length} participants from meeting`);
+    console.log('   Emails:', participantEmails.join(', '));
+    
+    if (participantEmails.length === 0) {
+      console.log('⚠️  No participants with emails found in meeting');
+      console.log('   Summary generated but not sent - no recipients');
+      console.log('   NOTE: Participants may have joined anonymously or Recall.ai could not capture emails');
+      return;
+    }
     
     // Send to n8n webhook
     console.log('\n📤 Sending data to n8n webhook...');
