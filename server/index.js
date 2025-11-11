@@ -1659,6 +1659,7 @@ app.post('/api/test-summary', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
 // Process calendar event - UPDATED with duplicate prevention
 async function processCalendarEvent(eventId) {
   try {
@@ -2049,7 +2050,57 @@ app.post('/api/calendar-webhook', async (req, res) => {
     res.status(200).send('OK');
   }
 });
-
+// Recall.ai webhook for bot events
+app.post('/api/recall-webhook', async (req, res) => {
+  try {
+    const { event, bot_id, data } = req.body;
+    
+    console.log('\n📬 RECALL.AI WEBHOOK RECEIVED');
+    console.log('   Event:', event);
+    console.log('   Bot ID:', bot_id);
+    console.log('   Data:', JSON.stringify(data, null, 2));
+    
+    // Acknowledge immediately
+    res.status(200).json({ received: true });
+    
+    // Check if meeting ended (call_ended event)
+    if (event === 'bot.call_ended') {
+      console.log('🏁 BOT CALL ENDED - MEETING FINISHED');
+      console.log('   Reason:', data?.sub_code || 'unknown');
+      
+      const sessionId = botSessionMap.get(bot_id);
+      const eventId = botEventMap.get(bot_id);
+      
+      if (sessionId && eventId) {
+        console.log(`   ✅ Found mapping: Session ${sessionId}, Event ${eventId}`);
+        
+        // Wait a bit for final transcripts to process
+        setTimeout(async () => {
+          console.log('📧 Automatically sending meeting summary...');
+          await sendSummaryViaN8n(eventId, sessionId);
+          
+          // Clean up mappings
+          botSessionMap.delete(bot_id);
+          botEventMap.delete(bot_id);
+          
+          console.log('🧹 Cleaned up bot mappings');
+        }, 5000); // Wait 5 seconds for transcription to settle
+        
+      } else {
+        console.log('   ⚠️  No mapping found for this bot');
+        console.log('   Bot ID:', bot_id);
+        console.log('   Available sessions:', Array.from(botSessionMap.keys()));
+        console.log('   Available events:', Array.from(botEventMap.keys()));
+      }
+    } else {
+      console.log('   ℹ️  Ignoring event:', event);
+    }
+    
+  } catch (error) {
+    console.error('❌ Recall webhook error:', error.message);
+    res.status(200).send('OK'); // Still acknowledge to prevent retries
+  }
+});
 // Manual calendar check endpoint
 app.post('/api/trigger-calendar-check', async (req, res) => {
   try {
