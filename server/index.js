@@ -1584,7 +1584,7 @@ async function deployBotToMeeting(meetingUrl, eventTitle, eventId) {
     
     const botConfig = {
       meeting_url: meetingUrl,
-      bot_name: "AI Voice Assistant",
+      bot_name: "James",
       output_media: {
         camera: {
           kind: "webpage",

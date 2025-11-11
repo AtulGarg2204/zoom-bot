@@ -155,8 +155,15 @@
         const transcriptContent = document.getElementById('transcriptContent');
         const responseContent = document.getElementById('responseContent');
         const notification = document.getElementById('notification');
-        const sessionId = 'session-' + Math.random().toString(36).substr(2, 9);
+       // Get eventId from URL parameter
+const urlParams = new URLSearchParams(window.location.search);
+const eventIdParam = urlParams.get('eventId');
 
+// Use eventId as session ID (or fallback to random for testing)
+const sessionId = eventIdParam ? `session-${eventIdParam}` : 'session-' + Math.random().toString(36).substr(2, 9);
+
+console.log('🆔 Session ID:', sessionId);
+console.log('📅 Event ID from URL:', eventIdParam);
         console.log('🆔 Session ID:', sessionId);
         console.log('🌐 Server:', SERVER_URL);
 
