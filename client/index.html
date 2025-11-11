@@ -155,12 +155,16 @@
         const transcriptContent = document.getElementById('transcriptContent');
         const responseContent = document.getElementById('responseContent');
         const notification = document.getElementById('notification');
-       // Get eventId from URL parameter
 const urlParams = new URLSearchParams(window.location.search);
 const eventIdParam = urlParams.get('eventId');
+const calendarEventId = urlParams.get('calendar_event_id');
 
-// Use eventId as session ID (or fallback to random for testing)
-const sessionId = eventIdParam ? `session-${eventIdParam}` : 'session-' + Math.random().toString(36).substr(2, 9);
+const sessionId = calendarEventId ? `session-${calendarEventId}` :
+                  eventIdParam ? `session-${eventIdParam}` :
+                  'session-' + Math.random().toString(36).substr(2, 9);
+
+console.log('🆔 Session ID:', sessionId);
+console.log('📅 Calendar Event ID:', calendarEventId);
 
 console.log('🆔 Session ID:', sessionId);
 console.log('📅 Event ID from URL:', eventIdParam);
