@@ -2053,23 +2053,39 @@ app.post('/api/calendar-webhook', async (req, res) => {
 // Recall.ai webhook for bot events
 app.post('/api/recall-webhook', async (req, res) => {
   try {
-    const { event, bot_id, data } = req.body;
+    const { event, data } = req.body;
+    
+    // Bot ID is nested in data.bot.id
+    const bot_id = data?.bot?.id;
+    const eventData = data?.data;
     
     console.log('\n📬 RECALL.AI WEBHOOK RECEIVED');
     console.log('   Event:', event);
     console.log('   Bot ID:', bot_id);
-    console.log('   Data:', JSON.stringify(data, null, 2));
+    console.log('   Event Code:', eventData?.code);
+    console.log('   Sub Code:', eventData?.sub_code);
     
     // Acknowledge immediately
     res.status(200).json({ received: true });
     
+    if (!bot_id) {
+      console.log('   ❌ No bot ID found in webhook');
+      return;
+    }
+    
     // Check if meeting ended (call_ended event)
     if (event === 'bot.call_ended') {
       console.log('🏁 BOT CALL ENDED - MEETING FINISHED');
-      console.log('   Reason:', data?.sub_code || 'unknown');
+      console.log('   Reason:', eventData?.sub_code || 'unknown');
       
       const sessionId = botSessionMap.get(bot_id);
       const eventId = botEventMap.get(bot_id);
+      
+      console.log('   🔍 Looking up bot ID:', bot_id);
+      console.log('   📋 Available mappings:', {
+        sessions: Array.from(botSessionMap.entries()),
+        events: Array.from(botEventMap.entries())
+      });
       
       if (sessionId && eventId) {
         console.log(`   ✅ Found mapping: Session ${sessionId}, Event ${eventId}`);
@@ -2088,9 +2104,9 @@ app.post('/api/recall-webhook', async (req, res) => {
         
       } else {
         console.log('   ⚠️  No mapping found for this bot');
-        console.log('   Bot ID:', bot_id);
-        console.log('   Available sessions:', Array.from(botSessionMap.keys()));
-        console.log('   Available events:', Array.from(botEventMap.keys()));
+        console.log('   Bot ID searched:', bot_id);
+        console.log('   Found session:', sessionId);
+        console.log('   Found event:', eventId);
       }
     } else {
       console.log('   ℹ️  Ignoring event:', event);
@@ -2098,6 +2114,7 @@ app.post('/api/recall-webhook', async (req, res) => {
     
   } catch (error) {
     console.error('❌ Recall webhook error:', error.message);
+    console.error('   Full error:', error);
     res.status(200).send('OK'); // Still acknowledge to prevent retries
   }
 });
