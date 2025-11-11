@@ -1572,12 +1572,12 @@ function extractMeetingUrl(event) {
   return null;
 }
 
-// Deploy bot to meeting
 async function deployBotToMeeting(meetingUrl, eventTitle, eventId) {
   try {
     console.log('\n🤖 Deploying bot to meeting...');
     console.log('   Meeting URL:', meetingUrl);
     console.log('   Event:', eventTitle);
+    console.log('   Event ID:', eventId);  // ← Added
     
     const clientUrl = "https://zoom-bot-jet.vercel.app";
     const serverUrl = "zoom-bot-pgyj.onrender.com";
@@ -1589,7 +1589,7 @@ async function deployBotToMeeting(meetingUrl, eventTitle, eventId) {
         camera: {
           kind: "webpage",
           config: {
-            url: `${clientUrl}?server=https://${serverUrl}`
+            url: `${clientUrl}?server=https://${serverUrl}&eventId=${eventId}`  // ← FIXED
           }
         }
       },
@@ -1597,6 +1597,8 @@ async function deployBotToMeeting(meetingUrl, eventTitle, eventId) {
         zoom: "web_4_core"
       }
     };
+    
+    console.log('🌐 Bot webpage URL:', botConfig.output_media.camera.config.url);  // ← Added
     
     // UPDATED: Use us-west-2 region
     const response = await fetch('https://us-west-2.recall.ai/api/v1/bot/', {
