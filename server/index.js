@@ -2098,44 +2098,8 @@ app.get('/api/health', (req, res) => {
 
 // Calendar webhook endpoint
 app.post('/api/calendar-webhook', async (req, res) => {
-  try {
-    const resourceState = req.headers['x-goog-resource-state'];
-    const resourceId = req.headers['x-goog-resource-id'];
-    const channelId = req.headers['x-goog-channel-id'];
-    
-    console.log('\n📬 Calendar webhook received:');
-    console.log('   State:', resourceState);
-    console.log('   Resource ID:', resourceId);
-    console.log('   Channel ID:', channelId);
-    
-    res.status(200).send('OK');
-    
-    if (resourceState === 'exists') {
-      console.log('   📅 Event created or updated');
-      
-      const now = new Date();
-      const fiveMinutesAgo = new Date(now.getTime() - 5 * 60 * 1000);
-      
-      const events = await calendar.events.list({
-        calendarId: 'primary',
-        timeMin: fiveMinutesAgo.toISOString(),
-        maxResults: 10,
-        singleEvents: true,
-        orderBy: 'updated'
-      });
-      
-      for (const event of events.data.items) {
-        await processCalendarEvent(event.id);
-      }
-      
-    } else if (resourceState === 'sync') {
-      console.log('   🔄 Initial sync notification');
-    }
-    
-  } catch (error) {
-    console.error('❌ Webhook error:', error.message);
-    res.status(200).send('OK');
-  }
+  console.log('⚠️  OLD CALENDAR WEBHOOK - DISABLED (Using Recall.ai Calendar V1)');
+  res.status(200).send('OK');
 });
 // Recall.ai webhook for bot events
 // app.post('/api/recall-webhook', async (req, res) => {
