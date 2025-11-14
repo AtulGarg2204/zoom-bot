@@ -1552,21 +1552,26 @@ async function deployBotToMeeting(meetingUrl, eventTitle, eventId) {
     const clientUrl = "https://zoom-bot-jet.vercel.app";
     const serverUrl = "zoom-bot-pgyj.onrender.com";
     
-    const botConfig = {
-      meeting_url: meetingUrl,
-      bot_name: "James",
-      output_media: {
-        camera: {
-          kind: "webpage",
-          config: {
-            url: `${clientUrl}?server=https://${serverUrl}&eventId=${eventId}`  // ← FIXED
-          }
-        }
-      },
-      variant: {
-        zoom: "web_4_core"
+  const botConfig = {
+  meeting_url: meetingUrl,
+  bot_name: "James",
+  metadata: {
+    eventId: eventId,
+    sessionId: `session-${eventId}`,
+    timestamp: new Date().toISOString()
+  },
+  output_media: {
+    camera: {
+      kind: "webpage",
+      config: {
+        url: `${clientUrl}?server=https://${serverUrl}&eventId=${eventId}`
       }
-    };
+    }
+  },
+  variant: {
+    zoom: "web_4_core"
+  }
+};
     
     console.log('🌐 Bot webpage URL:', botConfig.output_media.camera.config.url);  // ← Added
     
@@ -2136,63 +2141,60 @@ app.post('/api/calendar-webhook', async (req, res) => {
     res.status(200).send('OK');
   }
 });
-// Recall.ai webhook for bot events
 app.post('/api/recall-webhook', async (req, res) => {
   try {
     const { event, data } = req.body;
-    
-    // Bot ID is nested in data.bot.id
     const bot_id = data?.bot?.id;
     const eventData = data?.data;
     
     console.log('\n📬 RECALL.AI WEBHOOK RECEIVED');
     console.log('   Event:', event);
     console.log('   Bot ID:', bot_id);
-    console.log('   Event Code:', eventData?.code);
-    console.log('   Sub Code:', eventData?.sub_code);
     
     // Acknowledge immediately
     res.status(200).json({ received: true });
     
     if (!bot_id) {
-      console.log('   ❌ No bot ID found in webhook');
+      console.log('   ❌ No bot ID found');
       return;
     }
     
-    // Check if meeting ended (call_ended event)
     if (event === 'bot.call_ended') {
       console.log('🏁 BOT CALL ENDED - MEETING FINISHED');
       console.log('   Reason:', eventData?.sub_code || 'unknown');
       
-      const sessionId = botSessionMap.get(bot_id);
-      const eventId = botEventMap.get(bot_id);
+      // Fetch bot details to get metadata (survives server restarts!)
+      console.log('   📥 Fetching bot metadata from Recall.ai...');
       
-      console.log('   🔍 Looking up bot ID:', bot_id);
-      console.log('   📋 Available mappings:', {
-        sessions: Array.from(botSessionMap.entries()),
-        events: Array.from(botEventMap.entries())
+      const botResponse = await fetch(`https://us-west-2.recall.ai/api/v1/bot/${bot_id}`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Token ${RECALL_API_KEY}`,
+          'Content-Type': 'application/json'
+        }
       });
       
-      if (sessionId && eventId) {
-        console.log(`   ✅ Found mapping: Session ${sessionId}, Event ${eventId}`);
-        
-        // Wait a bit for final transcripts to process
+      if (!botResponse.ok) {
+        console.log('   ❌ Could not fetch bot details');
+        return;
+      }
+      
+      const botData = await botResponse.json();
+      const eventId = botData.metadata?.eventId;
+      const sessionId = botData.metadata?.sessionId;
+      
+      console.log('   ✅ Retrieved from bot metadata:');
+      console.log('      Event ID:', eventId);
+      console.log('      Session ID:', sessionId);
+      
+      if (eventId && sessionId) {
+        // Wait for transcripts to settle
         setTimeout(async () => {
           console.log('📧 Automatically sending meeting summary...');
           await sendSummaryViaN8n(eventId, sessionId);
-          
-          // Clean up mappings
-          botSessionMap.delete(bot_id);
-          botEventMap.delete(bot_id);
-          
-          console.log('🧹 Cleaned up bot mappings');
-        }, 5000); // Wait 5 seconds for transcription to settle
-        
+        }, 5000);
       } else {
-        console.log('   ⚠️  No mapping found for this bot');
-        console.log('   Bot ID searched:', bot_id);
-        console.log('   Found session:', sessionId);
-        console.log('   Found event:', eventId);
+        console.log('   ⚠️  Missing eventId or sessionId in bot metadata');
       }
     } else {
       console.log('   ℹ️  Ignoring event:', event);
@@ -2201,7 +2203,6 @@ app.post('/api/recall-webhook', async (req, res) => {
   } catch (error) {
     console.error('❌ Recall webhook error:', error.message);
     console.error('   Full error:', error);
-    res.status(200).send('OK'); // Still acknowledge to prevent retries
   }
 });
 // Manual calendar check endpoint
