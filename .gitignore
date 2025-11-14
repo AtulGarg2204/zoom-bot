@@ -4,3 +4,4 @@ node_modules/
 dist/
 build/
 *.log
+echo "server/get-refresh-token.js"
