@@ -1513,62 +1513,32 @@ Rules:
   }
 }
 
-// ============================================================
-// CALENDAR INTEGRATION FUNCTIONS
-// ============================================================
-
-// Extract meeting URL from calendar event
-function extractMeetingUrl(event) {
-  let meetingUrl = null;
-  
-  // Priority 1: Google Meet hangout link
-  if (event.hangoutLink) {
-    meetingUrl = event.hangoutLink;
-    console.log('   📹 Found Google Meet link');
-    return meetingUrl;
+function extractMeetingUrl(eventData) {
+  // Check conferenceData first (Google Meet)
+  if (eventData.conferenceData?.entryPoints) {
+    const videoEntry = eventData.conferenceData.entryPoints.find(
+      entry => entry.entryPointType === 'video'
+    );
+    if (videoEntry?.uri) {
+      return videoEntry.uri;
+    }
   }
   
-  // Priority 2: Zoom link in location
-  if (event.location) {
-    const zoomMatch = event.location.match(/https:\/\/[^\s]+zoom\.us\/[^\s]+/);
+  // Check description for Zoom links
+  if (eventData.description) {
+    const zoomMatch = eventData.description.match(/https:\/\/[a-z0-9-.]*zoom\.us\/j\/[0-9?&=\w-]+/i);
     if (zoomMatch) {
-      meetingUrl = zoomMatch[0];
-      console.log('   📹 Found Zoom link in location');
-      return meetingUrl;
-    }
-    
-    if (event.location.startsWith('http://') || event.location.startsWith('https://')) {
-      meetingUrl = event.location;
-      console.log('   📹 Found direct URL in location');
-      return meetingUrl;
+      return zoomMatch[0];
     }
   }
   
-  // Priority 3: Meeting link in description
-  if (event.description) {
-    const zoomMatch = event.description.match(/https:\/\/[^\s<]+zoom\.us\/[^\s<]+/);
-    if (zoomMatch) {
-      meetingUrl = zoomMatch[0];
-      console.log('   📹 Found Zoom link in description');
-      return meetingUrl;
-    }
-    
-    const meetMatch = event.description.match(/https:\/\/meet\.google\.com\/[^\s<]+/);
-    if (meetMatch) {
-      meetingUrl = meetMatch[0];
-      console.log('   📹 Found Google Meet link in description');
-      return meetingUrl;
-    }
-    
-    const teamsMatch = event.description.match(/https:\/\/teams\.microsoft\.com\/[^\s<]+/);
-    if (teamsMatch) {
-      meetingUrl = teamsMatch[0];
-      console.log('   📹 Found Teams link in description');
-      return meetingUrl;
+  // Check location field
+  if (eventData.location) {
+    if (eventData.location.includes('zoom.us') || eventData.location.includes('meet.google.com')) {
+      return eventData.location;
     }
   }
   
-  console.log('   ❌ No meeting URL found');
   return null;
 }
 
