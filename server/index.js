@@ -2278,20 +2278,24 @@ app.post('/api/connect', async (req, res) => {
   try {
     console.log('🔌 Connecting to Deepgram STT (Nova-3)...');
     
-    const dgConnection = deepgram.listen.live({
-      model: 'nova-3',
-      language: 'en-US',
-      smart_format: true,
-      interim_results: true,
-      utterance_end_ms: 1000,
-      vad_events: true,
-      encoding: 'linear16',
-      sample_rate: 24000,
-      channels: 1,
-      endpointing: 700,
-      diarize: true,
-      punctuate: true
-    });
+   const dgConnection = deepgram.listen.live({
+  model: 'nova-3',
+  language: 'en-US',
+  smart_format: true,
+  interim_results: true,
+  utterance_end_ms: 1000,
+  vad_events: true,
+  encoding: 'linear16',
+  sample_rate: 24000,
+  channels: 1,
+  endpointing: 700,
+  diarize: true,
+  diarize_version: '2021-07-14',
+  punctuate: true,
+  utterances: true,
+  filler_words: false,
+  multichannel: false
+});
     
     let lastProcessedTranscript = '';
     
