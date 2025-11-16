@@ -1552,13 +1552,16 @@ async function deployBotToMeeting(meetingUrl, eventTitle, eventId) {
     const clientUrl = "https://zoom-bot-jet.vercel.app";
     const serverUrl = "zoom-bot-pgyj.onrender.com";
     
-  const botConfig = {
+const botConfig = {
   meeting_url: meetingUrl,
   bot_name: "James",
   metadata: {
     eventId: eventId,
     sessionId: `session-${eventId}`,
     timestamp: new Date().toISOString()
+  },
+  transcription_options: {
+    provider: "assembly_ai"  // Enable Recall.ai's built-in transcription
   },
   output_media: {
     camera: {
@@ -2151,7 +2154,6 @@ app.post('/api/recall-webhook', async (req, res) => {
     console.log('   Event:', event);
     console.log('   Bot ID:', bot_id);
     
-    // Acknowledge immediately
     res.status(200).json({ received: true });
     
     if (!bot_id) {
@@ -2159,12 +2161,77 @@ app.post('/api/recall-webhook', async (req, res) => {
       return;
     }
     
+    // ========== NEW: HANDLE TRANSCRIPT EVENTS ==========
+    if (event === 'bot.transcript') {
+      console.log('\n📝 TRANSCRIPT EVENT RECEIVED');
+      
+      const speaker = eventData?.speaker || 'Unknown';
+      const transcript = eventData?.words || '';
+      const is_final = eventData?.is_final || false;
+      
+      console.log('   Speaker:', speaker);
+      console.log('   Transcript:', transcript);
+      console.log('   is_final:', is_final);
+      
+      // Get sessionId from bot metadata
+      const botResponse = await fetch(`https://us-west-2.recall.ai/api/v1/bot/${bot_id}`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Token ${RECALL_API_KEY}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      if (!botResponse.ok) {
+        console.log('   ❌ Could not fetch bot details');
+        return;
+      }
+      
+      const botData = await botResponse.json();
+      const sessionId = botData.metadata?.sessionId;
+      
+      if (!sessionId) {
+        console.log('   ❌ No sessionId in bot metadata');
+        return;
+      }
+      
+      const channel = `session-${sessionId}`;
+      
+      // Send interim transcript to frontend
+      pusher.trigger(channel, 'transcript-interim', {
+        text: transcript,
+        speaker: speaker,
+        is_final: is_final
+      }).catch(err => console.error('Pusher error:', err));
+      
+      // Process only final transcripts
+      if (is_final) {
+        console.log('\n✅ FINAL TRANSCRIPT - Processing...');
+        
+        const t0 = Date.now();
+        
+        // Send final transcript to frontend
+        pusher.trigger(channel, 'transcript', {
+          text: transcript,
+          speaker: speaker
+        }).catch(err => console.error('Pusher error:', err));
+        
+        // Add to conversation history
+        console.log('\n📚 ADDING TO CONVERSATION HISTORY:');
+        addToHistory(sessionId, speaker, transcript);
+        
+        // Process with LLM
+        console.log('\n🤖 SENDING TO LLM FOR DECISION...');
+        await processWithLLMContextAware(sessionId, t0);
+      }
+      
+      return;
+    }
+    // ===================================================
+    
     if (event === 'bot.call_ended') {
       console.log('🏁 BOT CALL ENDED - MEETING FINISHED');
       console.log('   Reason:', eventData?.sub_code || 'unknown');
-      
-      // Fetch bot details to get metadata (survives server restarts!)
-      console.log('   📥 Fetching bot metadata from Recall.ai...');
       
       const botResponse = await fetch(`https://us-west-2.recall.ai/api/v1/bot/${bot_id}`, {
         method: 'GET',
@@ -2188,7 +2255,6 @@ app.post('/api/recall-webhook', async (req, res) => {
       console.log('      Session ID:', sessionId);
       
       if (eventId && sessionId) {
-        // Wait for transcripts to settle
         setTimeout(async () => {
           console.log('📧 Automatically sending meeting summary...');
           await sendSummaryViaN8n(eventId, sessionId);
@@ -2278,24 +2344,20 @@ app.post('/api/connect', async (req, res) => {
   try {
     console.log('🔌 Connecting to Deepgram STT (Nova-3)...');
     
-   const dgConnection = deepgram.listen.live({
-  model: 'nova-3',
-  language: 'en-US',
-  smart_format: true,
-  interim_results: true,
-  utterance_end_ms: 1000,
-  vad_events: true,
-  encoding: 'linear16',
-  sample_rate: 24000,
-  channels: 1,
-  endpointing: 700,
-  diarize: true,
-  diarize_version: '2021-07-14',
-  punctuate: true,
-  utterances: true,
-  filler_words: false,
-  multichannel: false
-});
+    const dgConnection = deepgram.listen.live({
+      model: 'nova-3',
+      language: 'en-US',
+      smart_format: true,
+      interim_results: true,
+      utterance_end_ms: 1000,
+      vad_events: true,
+      encoding: 'linear16',
+      sample_rate: 24000,
+      channels: 1,
+      endpointing: 700,
+      diarize: true,
+      punctuate: true
+    });
     
     let lastProcessedTranscript = '';
     
