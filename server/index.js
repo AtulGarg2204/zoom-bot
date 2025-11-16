@@ -2403,11 +2403,17 @@ app.post('/api/recall-webhook', async (req, res) => {
         
         console.log('   ✅ Transcript download URL obtained');
         
-        // Download the actual transcript JSON
-        const transcriptJsonResponse = await fetch(downloadUrl);
-        const transcriptJson = await transcriptJsonResponse.json();
+     const transcriptJsonResponse = await fetch(downloadUrl);
+  const transcriptJson = await transcriptJsonResponse.json();
+  
+  console.log('   ✅ Transcript data downloaded');
+  
+  // ========== DEBUG: Log full transcript structure ==========
+  console.log('\n🔍 FULL TRANSCRIPT JSON STRUCTURE:');
+  console.log(JSON.stringify(transcriptJson, null, 2));
+  console.log('🔍 END OF TRANSCRIPT JSON\n');
         
-        console.log('   ✅ Transcript data downloaded');
+    
         console.log('   Utterances count:', transcriptJson.utterances?.length || 0);
         
         // Get bot metadata to find eventId and sessionId
