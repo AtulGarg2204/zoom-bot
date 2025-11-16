@@ -1552,36 +1552,13 @@ async function deployBotToMeeting(meetingUrl, eventTitle, eventId) {
     const clientUrl = "https://zoom-bot-jet.vercel.app";
     const serverUrl = "zoom-bot-pgyj.onrender.com";
     
-const botConfig = {
+  const botConfig = {
   meeting_url: meetingUrl,
   bot_name: "James",
   metadata: {
     eventId: eventId,
     sessionId: `session-${eventId}`,
     timestamp: new Date().toISOString()
-  },
-  // ✅ CORRECT: Use recording_config with transcript
-  recording_config: {
-    transcript: {
-      provider: {
-        recallai_streaming: {}  // Use Recall's built-in transcription
-      },
-      diarization: {
-        use_separate_streams_when_available: true  // Perfect speaker separation!
-      }
-    },
-    realtime_endpoints: [
-      {
-        type: "webhook",
-        url: `${PUBLIC_URL}/api/recall-webhook`,
-        events: ["transcript.data", "transcript.partial_data"]
-      }
-    ]
-  },
-  automatic_leave: {
-    waiting_room_timeout: 600,
-    noone_joined_timeout: 600,
-    everyone_left_timeout: 2
   },
   output_media: {
     camera: {
@@ -2164,120 +2141,328 @@ app.post('/api/calendar-webhook', async (req, res) => {
     res.status(200).send('OK');
   }
 });
+async function sendSummaryWithRecallTranscript(eventId, sessionId, transcriptJson) {
+  try {
+    console.log('\n📧 GENERATING SUMMARY WITH RECALL.AI TRANSCRIPT');
+    console.log('='.repeat(80));
+    
+    // Parse Recall.ai transcript format
+    const utterances = transcriptJson.utterances || [];
+    
+    if (utterances.length === 0) {
+      console.log('⚠️  No utterances in transcript');
+      return;
+    }
+    
+    // Build formatted transcript with REAL NAMES
+    const fullTranscript = utterances.map(utterance => {
+      const speakerName = utterance.speaker || 'Unknown Speaker';
+      const text = utterance.words.map(w => w.text).join(' ');
+      const timestamp = new Date(utterance.start * 1000).toLocaleTimeString();
+      
+      return `[${timestamp}] ${speakerName}: ${text}`;
+    }).join('\n\n');
+    
+    console.log(`📝 Transcript length: ${fullTranscript.length} characters`);
+    console.log(`💬 Total utterances: ${utterances.length}`);
+    
+    // Extract unique speaker names
+    const speakerNames = [...new Set(utterances.map(u => u.speaker).filter(Boolean))];
+    console.log(`👥 Speakers: ${speakerNames.join(', ')}`);
+    
+    // Generate summary using GPT-OSS-20B
+    console.log('\n🤖 Generating summary with GPT-OSS-20B...');
+    const summaryResponse = await groq.chat.completions.create({
+      model: 'openai/gpt-oss-20b',
+      messages: [
+        {
+          role: 'system',
+          content: `You are a professional meeting summarizer. Create a clear, concise summary in HTML format including:
+          - Main topics discussed
+          - Key decisions made
+          - Important questions and answers
+          - Action items (if any)
+          
+          Use HTML tags like <h3>, <p>, <ul>, <li> for structure.`
+        },
+        {
+          role: 'user',
+          content: `Summarize this meeting transcript:\n\n${fullTranscript}`
+        }
+      ],
+      max_completion_tokens: 500,
+      temperature: 0.3
+    });
+    
+    const summary = summaryResponse.choices[0].message.content.trim();
+    console.log('✅ Summary generated');
+    
+    // Get meeting details from Calendar
+    console.log('\n📅 Getting meeting details from Calendar...');
+    const event = await calendar.events.get({
+      calendarId: 'primary',
+      eventId: eventId
+    });
+    
+    const meetingTitle = event.data.summary || 'Meeting';
+    const meetingDate = event.data.start?.dateTime || event.data.start?.date;
+    const startTime = new Date(event.data.start?.dateTime);
+    const endTime = new Date(event.data.end?.dateTime);
+    const durationMinutes = Math.round((endTime - startTime) / 1000 / 60);
+    const duration = `${durationMinutes} minutes`;
+    
+    // Get participant emails from calendar attendees
+    console.log('\n📅 Getting participants from Calendar attendees...');
+    const attendees = event.data.attendees || [];
+    
+    let participantEmails = attendees
+      .filter(attendee => {
+        return attendee.email && attendee.responseStatus !== 'declined';
+      })
+      .map(attendee => attendee.email);
+    
+    // Add creator if not in list
+    if (event.data.creator?.email) {
+      if (!participantEmails.includes(event.data.creator.email)) {
+        participantEmails.push(event.data.creator.email);
+      }
+    }
+    
+    participantEmails = [...new Set(participantEmails)];
+    
+    console.log(`📧 Final participant count: ${participantEmails.length}`);
+    console.log('   Emails:', participantEmails.join(', '));
+    
+    if (participantEmails.length === 0) {
+      console.log('\n⚠️  No participants found - summary not sent');
+      return;
+    }
+    
+    // Send to n8n webhook
+    console.log('\n📤 Sending data to n8n webhook...');
+    const n8nWebhookUrl = process.env.N8N_WEBHOOK_URL;
+    
+    const n8nPayload = {
+      meetingTitle: meetingTitle,
+      meetingDate: new Date(meetingDate).toLocaleString('en-US', {
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      }),
+      duration: duration,
+      summary: summary,
+      participantEmails: participantEmails,
+      fullTranscript: fullTranscript,  // ← Contains REAL NAMES!
+      speakers: speakerNames,  // ← List of actual speaker names
+      eventId: eventId
+    };
+    
+    const response = await fetch(n8nWebhookUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(n8nPayload)
+    });
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`n8n webhook failed: ${response.status} - ${errorText}`);
+    }
+    
+    const result = await response.json();
+    
+    console.log('✅ n8n webhook successful!');
+    console.log('   Response:', result);
+    console.log('='.repeat(80) + '\n');
+    
+    // Clean up conversation history (from Deepgram real-time)
+    conversationHistory.delete(sessionId);
+    console.log('🧹 Cleaned up conversation history');
+    
+  } catch (error) {
+    console.error('❌ Error sending summary:', error.message);
+  }
+}
 app.post('/api/recall-webhook', async (req, res) => {
   try {
     const { event, data } = req.body;
+    const bot_id = data?.bot?.id;
+    const eventData = data?.data;
     
     console.log('\n📬 RECALL.AI WEBHOOK RECEIVED');
     console.log('   Event:', event);
+    console.log('   Bot ID:', bot_id);
     
-    // Acknowledge immediately (important for webhook performance!)
+    // Acknowledge immediately
     res.status(200).json({ received: true });
     
-    // ========== HANDLE TRANSCRIPT EVENTS ==========
-    if (event === 'transcript.data' || event === 'transcript.partial_data') {
-      console.log(`\n📝 ${event === 'transcript.data' ? 'FINAL' : 'PARTIAL'} TRANSCRIPT RECEIVED`);
+    // ========== NEW: HANDLE RECORDING DONE ==========
+    if (event === 'recording.done') {
+      console.log('\n🎬 RECORDING DONE - Starting transcript generation...');
       
-      const transcriptData = data?.data;
-      const participant = transcriptData?.participant;
-      const words = transcriptData?.words || [];
+      const recording_id = data?.recording?.id;
       
-      if (!participant || words.length === 0) {
-        console.log('   ⚠️  No participant or words data');
+      if (!recording_id) {
+        console.log('   ❌ No recording ID found');
         return;
       }
       
-      // Extract speaker name
-      const speakerName = participant.name || `Participant ${participant.id}`;
+      console.log('   Recording ID:', recording_id);
       
-      // Combine all words into transcript
-      const transcript = words.map(w => w.text).join(' ');
+      // Wait 2 seconds for recording to fully process
+      setTimeout(async () => {
+        try {
+          console.log('\n📝 Creating async transcript with diarization...');
+          
+          // Create async transcript with perfect diarization
+          const transcriptResponse = await fetch(
+            `https://us-west-2.recall.ai/api/v1/recording/${recording_id}/create_transcript/`,
+            {
+              method: 'POST',
+              headers: {
+                'Authorization': `Token ${RECALL_API_KEY}`,
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({
+                provider: {
+                  recallai_async: {
+                    language_code: 'en'
+                  }
+                },
+                diarization: {
+                  use_separate_streams_when_available: true
+                }
+              })
+            }
+          );
+          
+          if (!transcriptResponse.ok) {
+            const errorText = await transcriptResponse.text();
+            console.error('   ❌ Transcript creation failed:', errorText);
+            return;
+          }
+          
+          const transcriptData = await transcriptResponse.json();
+          console.log('   ✅ Transcript job created!');
+          console.log('   Transcript ID:', transcriptData.id);
+          console.log('   Waiting for transcript.done webhook...');
+          
+        } catch (error) {
+          console.error('   ❌ Error creating transcript:', error.message);
+        }
+      }, 2000);
       
-      // Determine if final
-      const is_final = event === 'transcript.data';
+      return;
+    }
+    // ===================================================
+    
+    // ========== NEW: HANDLE TRANSCRIPT DONE ==========
+    if (event === 'transcript.done') {
+      console.log('\n✅ TRANSCRIPT READY - Fetching data...');
       
-      console.log('   Speaker:', speakerName);
-      console.log('   Transcript:', transcript);
-      console.log('   is_final:', is_final);
-      console.log('   Email:', participant.email || 'N/A');
+      const transcript_id = data?.transcript?.id;
+      const recording_id = data?.recording?.id;
       
-      // Get sessionId from bot metadata
-      const bot_id = data?.bot?.id;
-      const sessionId = data?.bot?.metadata?.sessionId;
-      
-      if (!sessionId) {
-        console.log('   ❌ No sessionId in bot metadata');
+      if (!transcript_id) {
+        console.log('   ❌ No transcript ID found');
         return;
       }
       
-      const channel = sessionId; // "session-eventId"
+      console.log('   Transcript ID:', transcript_id);
+      console.log('   Recording ID:', recording_id);
       
-      // Send to frontend (for live display)
-      pusher.trigger(channel, 'transcript-interim', {
-        text: transcript,
-        speaker: speakerName,
-        is_final: is_final,
-        speech_final: is_final  // Match your existing frontend expectations
-      }).catch(err => console.error('Pusher error:', err));
-      
-      // Process only FINAL transcripts
-      if (is_final) {
-        console.log('\n✅ FINAL TRANSCRIPT - Processing with LLM...');
+      try {
+        // Fetch the transcript data
+        const transcriptResponse = await fetch(
+          `https://us-west-2.recall.ai/api/v1/transcript/${transcript_id}/`,
+          {
+            method: 'GET',
+            headers: {
+              'Authorization': `Token ${RECALL_API_KEY}`,
+              'Content-Type': 'application/json'
+            }
+          }
+        );
         
-        const t0 = Date.now();
+        if (!transcriptResponse.ok) {
+          console.error('   ❌ Failed to fetch transcript');
+          return;
+        }
         
-        // Send final transcript to frontend
-        pusher.trigger(channel, 'transcript', {
-          text: transcript,
-          speaker: speakerName
-        }).catch(err => console.error('Pusher error:', err));
+        const transcriptData = await transcriptResponse.json();
+        const downloadUrl = transcriptData.data?.download_url;
         
-        // Add to conversation history
-        console.log('\n📚 ADDING TO CONVERSATION HISTORY:');
-        console.log(`   Before: ${conversationHistory.get(sessionId)?.length || 0} messages`);
+        if (!downloadUrl) {
+          console.error('   ❌ No download URL in transcript data');
+          return;
+        }
         
-        addToHistory(sessionId, speakerName, transcript);
+        console.log('   ✅ Transcript download URL obtained');
         
-        console.log(`   After: ${conversationHistory.get(sessionId)?.length || 0} messages`);
-        console.log(`   Added: ${speakerName}: "${transcript}"`);
+        // Download the actual transcript JSON
+        const transcriptJsonResponse = await fetch(downloadUrl);
+        const transcriptJson = await transcriptJsonResponse.json();
         
-        // Process with LLM (your existing logic)
-        console.log('\n🤖 SENDING TO LLM FOR DECISION...');
-        console.log('-'.repeat(80));
+        console.log('   ✅ Transcript data downloaded');
+        console.log('   Utterances count:', transcriptJson.utterances?.length || 0);
         
-        await processWithLLMContextAware(sessionId, t0);
-      } else {
-        console.log('   ⏳ Partial result - waiting for final');
+        // Get bot metadata to find eventId and sessionId
+        const botResponse = await fetch(
+          `https://us-west-2.recall.ai/api/v1/bot/${bot_id}`,
+          {
+            method: 'GET',
+            headers: {
+              'Authorization': `Token ${RECALL_API_KEY}`,
+              'Content-Type': 'application/json'
+            }
+          }
+        );
+        
+        if (!botResponse.ok) {
+          console.error('   ❌ Could not fetch bot details');
+          return;
+        }
+        
+        const botData = await botResponse.json();
+        const eventId = botData.metadata?.eventId;
+        const sessionId = botData.metadata?.sessionId;
+        
+        console.log('   Event ID:', eventId);
+        console.log('   Session ID:', sessionId);
+        
+        if (!eventId || !sessionId) {
+          console.error('   ❌ Missing eventId or sessionId');
+          return;
+        }
+        
+        // Send summary with Recall.ai transcript (has real names!)
+        console.log('\n📧 Sending summary with accurate transcript...');
+        await sendSummaryWithRecallTranscript(eventId, sessionId, transcriptJson);
+        
+      } catch (error) {
+        console.error('   ❌ Error processing transcript:', error.message);
       }
       
       return;
     }
     // ===================================================
     
-    // Handle meeting end
+    // ========== KEEP: HANDLE CALL ENDED (OPTIONAL) ==========
     if (event === 'bot.call_ended') {
-      console.log('🏁 BOT CALL ENDED - MEETING FINISHED');
+      console.log('🏁 BOT CALL ENDED');
+      console.log('   Note: Transcript will be generated via recording.done event');
       
-      const bot_id = data?.bot?.id;
-      const eventId = data?.bot?.metadata?.eventId;
-      const sessionId = data?.bot?.metadata?.sessionId;
-      
-      console.log('   Event ID:', eventId);
-      console.log('   Session ID:', sessionId);
-      
-      if (eventId && sessionId) {
-        setTimeout(async () => {
-          console.log('📧 Automatically sending meeting summary...');
-          await sendSummaryViaN8n(eventId, sessionId);
-        }, 5000);
-      } else {
-        console.log('   ⚠️  Missing eventId or sessionId in bot metadata');
-      }
+      // Optional: You can remove the automatic summary trigger here
+      // since we'll do it after transcript.done instead
       
       return;
     }
+    // ===================================================
     
-    // Ignore other events
     console.log('   ℹ️  Ignoring event:', event);
     
   } catch (error) {
@@ -2285,6 +2470,7 @@ app.post('/api/recall-webhook', async (req, res) => {
     console.error('   Full error:', error);
   }
 });
+// Manual calendar check endpoint
 app.post('/api/trigger-calendar-check', async (req, res) => {
   try {
     console.log('\n🔍 Manual calendar check triggered...');
