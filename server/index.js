@@ -1560,8 +1560,28 @@ const botConfig = {
     sessionId: `session-${eventId}`,
     timestamp: new Date().toISOString()
   },
-  transcription_options: {
-    provider: "assembly_ai"  // Enable Recall.ai's built-in transcription
+  // ✅ CORRECT: Use recording_config with transcript
+  recording_config: {
+    transcript: {
+      provider: {
+        recallai_streaming: {}  // Use Recall's built-in transcription
+      },
+      diarization: {
+        use_separate_streams_when_available: true  // Perfect speaker separation!
+      }
+    },
+    realtime_endpoints: [
+      {
+        type: "webhook",
+        url: `${PUBLIC_URL}/api/recall-webhook`,
+        events: ["transcript.data", "transcript.partial_data"]
+      }
+    ]
+  },
+  automatic_leave: {
+    waiting_room_timeout: 600,
+    noone_joined_timeout: 600,
+    everyone_left_timeout: 2
   },
   output_media: {
     camera: {
@@ -2147,112 +2167,103 @@ app.post('/api/calendar-webhook', async (req, res) => {
 app.post('/api/recall-webhook', async (req, res) => {
   try {
     const { event, data } = req.body;
-    const bot_id = data?.bot?.id;
-    const eventData = data?.data;
     
     console.log('\n📬 RECALL.AI WEBHOOK RECEIVED');
     console.log('   Event:', event);
-    console.log('   Bot ID:', bot_id);
     
+    // Acknowledge immediately (important for webhook performance!)
     res.status(200).json({ received: true });
     
-    if (!bot_id) {
-      console.log('   ❌ No bot ID found');
-      return;
-    }
-    
-    // ========== NEW: HANDLE TRANSCRIPT EVENTS ==========
-    if (event === 'bot.transcript') {
-      console.log('\n📝 TRANSCRIPT EVENT RECEIVED');
+    // ========== HANDLE TRANSCRIPT EVENTS ==========
+    if (event === 'transcript.data' || event === 'transcript.partial_data') {
+      console.log(`\n📝 ${event === 'transcript.data' ? 'FINAL' : 'PARTIAL'} TRANSCRIPT RECEIVED`);
       
-      const speaker = eventData?.speaker || 'Unknown';
-      const transcript = eventData?.words || '';
-      const is_final = eventData?.is_final || false;
+      const transcriptData = data?.data;
+      const participant = transcriptData?.participant;
+      const words = transcriptData?.words || [];
       
-      console.log('   Speaker:', speaker);
-      console.log('   Transcript:', transcript);
-      console.log('   is_final:', is_final);
-      
-      // Get sessionId from bot metadata
-      const botResponse = await fetch(`https://us-west-2.recall.ai/api/v1/bot/${bot_id}`, {
-        method: 'GET',
-        headers: {
-          'Authorization': `Token ${RECALL_API_KEY}`,
-          'Content-Type': 'application/json'
-        }
-      });
-      
-      if (!botResponse.ok) {
-        console.log('   ❌ Could not fetch bot details');
+      if (!participant || words.length === 0) {
+        console.log('   ⚠️  No participant or words data');
         return;
       }
       
-      const botData = await botResponse.json();
-      const sessionId = botData.metadata?.sessionId;
+      // Extract speaker name
+      const speakerName = participant.name || `Participant ${participant.id}`;
+      
+      // Combine all words into transcript
+      const transcript = words.map(w => w.text).join(' ');
+      
+      // Determine if final
+      const is_final = event === 'transcript.data';
+      
+      console.log('   Speaker:', speakerName);
+      console.log('   Transcript:', transcript);
+      console.log('   is_final:', is_final);
+      console.log('   Email:', participant.email || 'N/A');
+      
+      // Get sessionId from bot metadata
+      const bot_id = data?.bot?.id;
+      const sessionId = data?.bot?.metadata?.sessionId;
       
       if (!sessionId) {
         console.log('   ❌ No sessionId in bot metadata');
         return;
       }
       
-      const channel = `session-${sessionId}`;
+      const channel = sessionId; // "session-eventId"
       
-      // Send interim transcript to frontend
+      // Send to frontend (for live display)
       pusher.trigger(channel, 'transcript-interim', {
         text: transcript,
-        speaker: speaker,
-        is_final: is_final
+        speaker: speakerName,
+        is_final: is_final,
+        speech_final: is_final  // Match your existing frontend expectations
       }).catch(err => console.error('Pusher error:', err));
       
-      // Process only final transcripts
+      // Process only FINAL transcripts
       if (is_final) {
-        console.log('\n✅ FINAL TRANSCRIPT - Processing...');
+        console.log('\n✅ FINAL TRANSCRIPT - Processing with LLM...');
         
         const t0 = Date.now();
         
         // Send final transcript to frontend
         pusher.trigger(channel, 'transcript', {
           text: transcript,
-          speaker: speaker
+          speaker: speakerName
         }).catch(err => console.error('Pusher error:', err));
         
         // Add to conversation history
         console.log('\n📚 ADDING TO CONVERSATION HISTORY:');
-        addToHistory(sessionId, speaker, transcript);
+        console.log(`   Before: ${conversationHistory.get(sessionId)?.length || 0} messages`);
         
-        // Process with LLM
+        addToHistory(sessionId, speakerName, transcript);
+        
+        console.log(`   After: ${conversationHistory.get(sessionId)?.length || 0} messages`);
+        console.log(`   Added: ${speakerName}: "${transcript}"`);
+        
+        // Process with LLM (your existing logic)
         console.log('\n🤖 SENDING TO LLM FOR DECISION...');
+        console.log('-'.repeat(80));
+        
         await processWithLLMContextAware(sessionId, t0);
+      } else {
+        console.log('   ⏳ Partial result - waiting for final');
       }
       
       return;
     }
     // ===================================================
     
+    // Handle meeting end
     if (event === 'bot.call_ended') {
       console.log('🏁 BOT CALL ENDED - MEETING FINISHED');
-      console.log('   Reason:', eventData?.sub_code || 'unknown');
       
-      const botResponse = await fetch(`https://us-west-2.recall.ai/api/v1/bot/${bot_id}`, {
-        method: 'GET',
-        headers: {
-          'Authorization': `Token ${RECALL_API_KEY}`,
-          'Content-Type': 'application/json'
-        }
-      });
+      const bot_id = data?.bot?.id;
+      const eventId = data?.bot?.metadata?.eventId;
+      const sessionId = data?.bot?.metadata?.sessionId;
       
-      if (!botResponse.ok) {
-        console.log('   ❌ Could not fetch bot details');
-        return;
-      }
-      
-      const botData = await botResponse.json();
-      const eventId = botData.metadata?.eventId;
-      const sessionId = botData.metadata?.sessionId;
-      
-      console.log('   ✅ Retrieved from bot metadata:');
-      console.log('      Event ID:', eventId);
-      console.log('      Session ID:', sessionId);
+      console.log('   Event ID:', eventId);
+      console.log('   Session ID:', sessionId);
       
       if (eventId && sessionId) {
         setTimeout(async () => {
@@ -2262,16 +2273,18 @@ app.post('/api/recall-webhook', async (req, res) => {
       } else {
         console.log('   ⚠️  Missing eventId or sessionId in bot metadata');
       }
-    } else {
-      console.log('   ℹ️  Ignoring event:', event);
+      
+      return;
     }
+    
+    // Ignore other events
+    console.log('   ℹ️  Ignoring event:', event);
     
   } catch (error) {
     console.error('❌ Recall webhook error:', error.message);
     console.error('   Full error:', error);
   }
 });
-// Manual calendar check endpoint
 app.post('/api/trigger-calendar-check', async (req, res) => {
   try {
     console.log('\n🔍 Manual calendar check triggered...');
