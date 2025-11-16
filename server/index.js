@@ -1853,6 +1853,7 @@ async function stopCalendarWatch() {
 const botSessionMap = new Map();
 const botEventMap = new Map();
 const sessionToBotMap = new Map(); 
+const sessionStartTimes = new Map();
 
 async function sendSummaryViaN8n(eventId, sessionId) {
   try {
