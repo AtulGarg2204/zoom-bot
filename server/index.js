@@ -1001,13 +1001,20 @@ function addToHistory(sessionId, speaker, message) {
   
   const history = conversationHistory.get(sessionId);
   
-  const now = new Date();
+  const now = Date.now();
+  const recordingStartTime = sessionStartTimes.get(sessionId);
+  
+  // Calculate relative time from when bot joined
+  const relativeSeconds = recordingStartTime 
+    ? (now - recordingStartTime) / 1000 
+    : 0;
   
   history.push({
     speaker: speaker,
     content: message,
-    timestamp: now.toISOString(),
-    unixTimestamp: now.getTime()  // ← ADD THIS for easier comparison
+    timestamp: new Date(now).toISOString(),
+    absoluteTimestamp: now,
+    relativeSeconds: relativeSeconds  // Seconds since bot joined
   });
   
   // Keep last 12 messages for context
@@ -1640,7 +1647,12 @@ const sessionId = `session-${eventId}`;
 botSessionMap.set(result.id, sessionId);
 botEventMap.set(result.id, eventId);
 
-sessionToBotMap.set(sessionId, result.id);  
+sessionToBotMap.set(sessionId, result.id);
+
+// Store when bot actually joined (recording start time)
+sessionStartTimes.set(sessionId, Date.now());
+console.log(`🕒 Bot joined at: ${new Date().toLocaleString()}`);
+console.log(`📝 Stored mapping: Bot ${result.id} -> Session ${sessionId} -> Event ${eventId}`); 
 
 console.log(`📝 Stored mapping: Bot ${result.id} -> Session ${sessionId} -> Event ${eventId}`);
 
@@ -2108,22 +2120,39 @@ async function sendSummaryWithRecallTranscript(eventId, sessionId, transcriptJso
     });
     
     const meetingTitle = event.data.summary || 'Meeting';
-    const meetingDate = event.data.start?.dateTime || event.data.start?.date;
-    const startTime = new Date(event.data.start?.dateTime);
-    const endTime = new Date(event.data.end?.dateTime);
-    const meetingStartTimestamp = startTime.getTime();
-    const durationMinutes = Math.round((endTime - startTime) / 1000 / 60);
-    const duration = `${durationMinutes} minutes`;
+    const calendarStartTime = new Date(event.data.start?.dateTime || event.data.start?.date);
+    const calendarEndTime = new Date(event.data.end?.dateTime || event.data.end?.date);
     
     console.log('   Meeting Title:', meetingTitle);
-    console.log('   Meeting started at:', startTime.toLocaleString());
-    console.log('   Meeting start timestamp:', meetingStartTimestamp);
+    console.log('   Calendar start time:', calendarStartTime.toLocaleString());
+    console.log('   Calendar start timestamp:', calendarStartTime.getTime());
+    
+    // Use actual bot join time (when recording started)
+    const actualRecordingStartTime = sessionStartTimes.get(sessionId);
+    
+    if (!actualRecordingStartTime) {
+      console.log('   ⚠️  No recording start time found! Using calendar time as fallback');
+    }
+    
+    const meetingStartTimestamp = actualRecordingStartTime || calendarStartTime.getTime();
+    
+    console.log('\n🕒 ACTUAL MEETING TIME:');
+    console.log('   Bot joined at:', new Date(meetingStartTimestamp).toLocaleString());
+    console.log('   Bot join timestamp:', meetingStartTimestamp);
+    console.log('   Current time:', new Date().toLocaleString());
+    
+    const durationMinutes = Math.round((calendarEndTime - calendarStartTime) / 1000 / 60);
+    const duration = `${durationMinutes} minutes`;
     
     // ========== STEP 2: Parse Recall.ai transcript ==========
-    console.log('\n📝 Parsing Recall.ai transcript (real names)...');
-    const participantUtterances = transcriptJson || [];
+    console.log('\n' + '='.repeat(80));
+    console.log('📝 PARSING RECALL.AI TRANSCRIPT (Real Names)');
+    console.log('='.repeat(80));
     
-    const recallTranscriptMap = new Map();  // timestamp → { speaker, text }
+    const participantUtterances = transcriptJson || [];
+    console.log(`Found ${participantUtterances.length} participant utterance groups\n`);
+    
+    const recallTranscriptMap = new Map();
     
     for (const utterance of participantUtterances) {
       const participant = utterance.participant;
@@ -2148,11 +2177,11 @@ async function sendSummaryWithRecallTranscript(eventId, sessionId, transcriptJso
             const relativeSeconds = currentSentence[0].start;
             const actualTimestamp = meetingStartTimestamp + (relativeSeconds * 1000);
             
-            // Store in map: timestamp → speaker name
-            recallTranscriptMap.set(Math.floor(actualTimestamp / 1000), {
+            recallTranscriptMap.set(relativeSeconds, {
               speaker: speakerName,
               text: sentence,
-              timestamp: actualTimestamp
+              timestamp: actualTimestamp,
+              relativeSeconds: relativeSeconds
             });
             
             currentSentence = [];
@@ -2172,87 +2201,127 @@ async function sendSummaryWithRecallTranscript(eventId, sessionId, transcriptJso
         const relativeSeconds = currentSentence[0].start;
         const actualTimestamp = meetingStartTimestamp + (relativeSeconds * 1000);
         
-        recallTranscriptMap.set(Math.floor(actualTimestamp / 1000), {
+        recallTranscriptMap.set(relativeSeconds, {
           speaker: speakerName,
           text: sentence,
-          timestamp: actualTimestamp
+          timestamp: actualTimestamp,
+          relativeSeconds: relativeSeconds
         });
       }
     }
     
-    console.log(`   ✅ Parsed ${recallTranscriptMap.size} entries from Recall.ai`);
+    console.log(`✅ Parsed ${recallTranscriptMap.size} entries from Recall.ai\n`);
     
-    // ========== STEP 3: Get Deepgram transcript from conversation history ==========
-    console.log('\n📝 Getting Deepgram transcript (with AI responses)...');
+    // Print Recall.ai transcript
+    console.log('┌─ RECALL.AI TRANSCRIPT ─' + '─'.repeat(54) + '┐');
+    const sortedRecall = Array.from(recallTranscriptMap.entries()).sort((a, b) => a[0] - b[0]);
+    for (const [relSec, entry] of sortedRecall) {
+      const time = new Date(entry.timestamp).toLocaleTimeString();
+      const preview = entry.text.substring(0, 40);
+      console.log(`│ [+${relSec.toFixed(1)}s] ${time} | ${entry.speaker}: ${preview}...`.padEnd(79) + '│');
+    }
+    console.log('└' + '─'.repeat(78) + '┘');
+    
+    // ========== STEP 3: Get Deepgram transcript ==========
+    console.log('\n' + '='.repeat(80));
+    console.log('📝 GETTING DEEPGRAM TRANSCRIPT (Has AI Responses)');
+    console.log('='.repeat(80));
+    
     const conversationHistoryData = conversationHistory.get(sessionId) || [];
-    
-    console.log(`   Found ${conversationHistoryData.length} messages in conversation history`);
+    console.log(`Found ${conversationHistoryData.length} messages in conversation history\n`);
     
     if (conversationHistoryData.length === 0) {
-      console.log('   ⚠️  Conversation history is empty! Will only use Recall.ai transcript');
+      console.log('⚠️  WARNING: Conversation history is EMPTY!');
+      console.log('   This means history was deleted before transcript processing');
+      console.log('   Check that you removed conversationHistory.delete() from disconnect handler\n');
     }
     
-    // ========== STEP 4: Merge transcripts by timestamp ==========
-    console.log('\n🔀 Merging transcripts by timestamp...');
+    // Print Deepgram transcript
+    console.log('┌─ DEEPGRAM TRANSCRIPT ─' + '─'.repeat(55) + '┐');
+    for (const msg of conversationHistoryData) {
+      const relSec = msg.relativeSeconds || 0;
+      const time = new Date(msg.absoluteTimestamp).toLocaleTimeString();
+      const preview = msg.content.substring(0, 40);
+      console.log(`│ [+${relSec.toFixed(1)}s] ${time} | ${msg.speaker}: ${preview}...`.padEnd(79) + '│');
+    }
+    console.log('└' + '─'.repeat(78) + '┘');
+    
+    // ========== STEP 4: Merge transcripts ==========
+    console.log('\n' + '='.repeat(80));
+    console.log('🔀 MERGING TRANSCRIPTS BY RELATIVE TIME');
+    console.log('='.repeat(80) + '\n');
     
     const mergedTranscript = [];
     const allSpeakerNames = new Set();
     
     for (const msg of conversationHistoryData) {
-      const timestamp = msg.unixTimestamp;
+      const relativeSeconds = msg.relativeSeconds || 0;
       const speaker = msg.speaker;
       const text = msg.content;
       
-      // Check if this is a human speaker (Speaker 0, Speaker 1, etc.)
+      console.log(`\n🔍 Processing Deepgram entry:`);
+      console.log(`   [+${relativeSeconds.toFixed(1)}s] ${speaker}: "${text}"`);
+      
       const isHumanSpeaker = speaker.startsWith('Speaker ');
       
       if (isHumanSpeaker) {
-        // Try to find matching entry in Recall.ai transcript
-        const timestampKey = Math.floor(timestamp / 1000);  // Round to nearest second
+        console.log(`   Type: Human (generic label) - Looking for match in Recall.ai...`);
         
-        // Search within ±3 seconds for a match
         let matchedEntry = null;
-        for (let offset = -3; offset <= 3; offset++) {
-          const checkKey = timestampKey + offset;
-          if (recallTranscriptMap.has(checkKey)) {
-            const recallEntry = recallTranscriptMap.get(checkKey);
+        let minTimeDiff = Infinity;
+        
+        // Search for closest match in Recall.ai (within 5 seconds)
+        for (const [recallRelSec, recallEntry] of recallTranscriptMap) {
+          const timeDiff = Math.abs(recallRelSec - relativeSeconds);
+          
+          if (timeDiff <= 5) {
+            console.log(`   → Checking Recall entry [+${recallRelSec.toFixed(1)}s] ${recallEntry.speaker}`);
+            console.log(`      Time diff: ${timeDiff.toFixed(1)}s`);
             
-            // Check if text is similar (simple check: first 10 chars match)
-            const deepgramText = text.substring(0, 10).toLowerCase();
-            const recallText = recallEntry.text.substring(0, 10).toLowerCase();
+            // Text similarity check
+            const deepgramWords = text.toLowerCase().split(' ').slice(0, 3);
+            const recallWords = recallEntry.text.toLowerCase().split(' ').slice(0, 3);
             
-            if (deepgramText === recallText || 
-                recallEntry.text.includes(text.substring(0, 20)) ||
-                text.includes(recallEntry.text.substring(0, 20))) {
+            console.log(`      Deepgram: "${deepgramWords.join(' ')}"`);
+            console.log(`      Recall:   "${recallWords.join(' ')}"`);
+            
+            const wordsMatch = deepgramWords.some(w => recallWords.includes(w));
+            
+            if (wordsMatch && timeDiff < minTimeDiff) {
               matchedEntry = recallEntry;
-              break;
+              minTimeDiff = timeDiff;
+              console.log(`      ✅ POTENTIAL MATCH (best so far)`);
+            } else {
+              console.log(`      ❌ No word overlap`);
             }
           }
         }
         
         if (matchedEntry) {
-          // Use real name from Recall.ai
+          console.log(`   ✅ MATCHED! Using name: "${matchedEntry.speaker}"`);
           mergedTranscript.push({
-            timestamp: timestamp,
-            speaker: matchedEntry.speaker,  // ← Real name!
-            text: text  // Use Deepgram's text (might be more complete)
+            timestamp: msg.absoluteTimestamp,
+            relativeSeconds: relativeSeconds,
+            speaker: matchedEntry.speaker,  // Real name
+            text: text
           });
           allSpeakerNames.add(matchedEntry.speaker);
-          console.log(`   ✅ Matched: ${speaker} → ${matchedEntry.speaker}`);
         } else {
-          // No match found, use generic speaker name
+          console.log(`   ⚠️  NO MATCH FOUND - keeping generic "${speaker}"`);
           mergedTranscript.push({
-            timestamp: timestamp,
-            speaker: speaker,
+            timestamp: msg.absoluteTimestamp,
+            relativeSeconds: relativeSeconds,
+            speaker: speaker,  // Keep generic
             text: text
           });
           allSpeakerNames.add(speaker);
-          console.log(`   ⚠️  No match for ${speaker} at ${new Date(timestamp).toLocaleTimeString()}`);
         }
       } else {
-        // AI Assistant - keep as is
+        // AI Assistant
+        console.log(`   Type: AI Assistant - no matching needed`);
         mergedTranscript.push({
-          timestamp: timestamp,
+          timestamp: msg.absoluteTimestamp,
+          relativeSeconds: relativeSeconds,
           speaker: speaker,
           text: text
         });
@@ -2261,12 +2330,23 @@ async function sendSummaryWithRecallTranscript(eventId, sessionId, transcriptJso
     }
     
     // Sort by timestamp
-    mergedTranscript.sort((a, b) => a.timestamp - b.timestamp);
+    mergedTranscript.sort((a, b) => a.relativeSeconds - b.relativeSeconds);
     
-    console.log(`   ✅ Merged transcript has ${mergedTranscript.length} entries`);
-    console.log(`   👥 Speakers: ${Array.from(allSpeakerNames).join(', ')}`);
+    console.log('\n' + '='.repeat(80));
+    console.log('✅ FINAL MERGED TRANSCRIPT');
+    console.log('='.repeat(80) + '\n');
+    console.log(`Total entries: ${mergedTranscript.length}`);
+    console.log(`Speakers: ${Array.from(allSpeakerNames).join(', ')}\n`);
     
-    // ========== STEP 5: Format merged transcript ==========
+    console.log('┌─ MERGED RESULT ─' + '─'.repeat(61) + '┐');
+    for (const entry of mergedTranscript) {
+      const time = new Date(entry.timestamp).toLocaleTimeString();
+      const preview = entry.text.substring(0, 40);
+      console.log(`│ [+${entry.relativeSeconds.toFixed(1)}s] ${time} | ${entry.speaker}: ${preview}...`.padEnd(79) + '│');
+    }
+    console.log('└' + '─'.repeat(78) + '┘');
+    
+    // ========== STEP 5: Format transcript ==========
     let fullTranscript = '';
     
     for (const entry of mergedTranscript) {
@@ -2274,15 +2354,15 @@ async function sendSummaryWithRecallTranscript(eventId, sessionId, transcriptJso
       fullTranscript += `[${timestamp}] ${entry.speaker}: ${entry.text}\n\n`;
     }
     
-    console.log(`📝 Final transcript length: ${fullTranscript.length} characters`);
+    console.log(`\n📝 Final transcript: ${fullTranscript.length} characters`);
     
     if (fullTranscript.length === 0) {
-      console.log('⚠️  No transcript content generated');
+      console.log('⚠️  No transcript content - skipping summary');
       return;
     }
     
-    // ========== STEP 6: Generate summary ==========
-    console.log('\n🤖 Generating summary with GPT-OSS-20B...');
+    // ========== Continue with summary generation ==========
+    console.log('\n🤖 Generating summary...');
     const summaryResponse = await groq.chat.completions.create({
       model: 'openai/gpt-oss-20b',
       messages: [
@@ -2308,8 +2388,8 @@ async function sendSummaryWithRecallTranscript(eventId, sessionId, transcriptJso
     const summary = summaryResponse.choices[0].message.content.trim();
     console.log('✅ Summary generated');
     
-    // ========== STEP 7: Get participant emails ==========
-    console.log('\n📅 Getting participants from Calendar attendees...');
+    // Get participant emails
+    console.log('\n📅 Getting participant emails from calendar...');
     const attendees = event.data.attendees || [];
     
     let participantEmails = attendees
@@ -2322,21 +2402,21 @@ async function sendSummaryWithRecallTranscript(eventId, sessionId, transcriptJso
     
     participantEmails = [...new Set(participantEmails)];
     
-    console.log(`📧 Final participant count: ${participantEmails.length}`);
-    console.log('   Emails:', participantEmails.join(', '));
+    console.log(`   Found ${participantEmails.length} participants`);
+    console.log(`   Emails: ${participantEmails.join(', ')}`);
     
     if (participantEmails.length === 0) {
-      console.log('\n⚠️  No participants found - summary not sent');
+      console.log('⚠️  No participants - skipping email');
       return;
     }
     
-    // ========== STEP 8: Send to n8n ==========
-    console.log('\n📤 Sending data to n8n webhook...');
+    // Send to n8n
+    console.log('\n📤 Sending to n8n...');
     const n8nWebhookUrl = process.env.N8N_WEBHOOK_URL;
     
     const n8nPayload = {
       meetingTitle: meetingTitle,
-      meetingDate: new Date(meetingDate).toLocaleString('en-US', {
+      meetingDate: new Date(meetingStartTimestamp).toLocaleString('en-US', {
         weekday: 'long',
         year: 'numeric',
         month: 'long',
@@ -2360,22 +2440,22 @@ async function sendSummaryWithRecallTranscript(eventId, sessionId, transcriptJso
     
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(`n8n webhook failed: ${response.status} - ${errorText}`);
+      throw new Error(`n8n failed: ${response.status} - ${errorText}`);
     }
     
     const result = await response.json();
-    
-    console.log('✅ n8n webhook successful!');
+    console.log('✅ Email sent!');
     console.log('   Response:', result);
+    
+    // Clean up
+    conversationHistory.delete(sessionId);
+    sessionStartTimes.delete(sessionId);
+    console.log('\n🧹 Cleaned up session data');
     console.log('='.repeat(80) + '\n');
     
-    // ========== STEP 9: Clean up ==========
-    conversationHistory.delete(sessionId);
-    console.log('🧹 Cleaned up conversation history');
-    
   } catch (error) {
-    console.error('❌ Error sending summary:', error.message);
-    console.error('Full error:', error);
+    console.error('❌ Error:', error.message);
+    console.error(error);
   }
 }
 app.post('/api/recall-webhook', async (req, res) => {
