@@ -782,110 +782,7 @@ app.post('/api/test-summary', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
-async function mapSpeakerNamesWithLLM(sessionId) {
-  try {
-    console.log('\n🔍 MAPPING SPEAKER NAMES WITH LLM');
-    console.log('='.repeat(80));
-    
-    const deepgramHistory = conversationHistory.get(sessionId) || [];
-    const recallHistory = recallConversationHistory.get(sessionId) || [];
-    
-    if (deepgramHistory.length === 0 || recallHistory.length === 0) {
-      console.log('⚠️  Insufficient data for mapping');
-      return null;
-    }
-    
-    // Format both histories
-    const deepgramText = deepgramHistory.map(msg => 
-      `${msg.speaker}: ${msg.content}`
-    ).join('\n');
-    
-    const recallText = recallHistory.map(msg => 
-      `${msg.speaker}: ${msg.content}`
-    ).join('\n');
-    
-    console.log('\n📊 DEEPGRAM HISTORY (Correct Order):');
-    console.log(deepgramText);
-    
-    console.log('\n📊 RECALL HISTORY (Has Real Names):');
-    console.log(recallText);
-    
-    // Call LLM for mapping
-    const response = await groq.chat.completions.create({
-      model: 'openai/gpt-oss-20b',
-      messages: [
-        {
-          role: 'system',
-          content: `You are a transcript analyzer. Your job is to map generic speaker labels (Speaker 0, Speaker 1) to real participant names.
 
-You will receive TWO conversation transcripts:
-1. DEEPGRAM TRANSCRIPT: Has correct order and timing, but uses generic labels (Speaker 0, Speaker 1, etc.)
-2. RECALL TRANSCRIPT: Has real participant names, but may have wrong order or combined sentences
-
-Your task:
-- Analyze the content of what each speaker said
-- Match "Speaker 0", "Speaker 1" etc. from Deepgram to real names from Recall
-- Return ONLY a JSON object mapping generic labels to real names
-
-Response format (JSON ONLY, no explanations):
-{
-  "Speaker 0": "Real Name Here",
-  "Speaker 1": "Another Real Name",
-  "AI Assistant": "AI Assistant"
-}
-
-Rules:
-- Match based on content similarity (not just order)
-- If unsure, use best guess based on context
-- Always keep "AI Assistant" as "AI Assistant"
-- Return valid JSON only`
-        },
-        {
-          role: 'user',
-          content: `DEEPGRAM TRANSCRIPT (correct order, generic labels):
-${deepgramText}
-
-RECALL TRANSCRIPT (has real names, may have wrong order):
-${recallText}
-
-Map the speaker labels to real names and return ONLY JSON.`
-        }
-      ],
-      max_completion_tokens: 300,
-      temperature: 0.1,
-      top_p: 0.5
-    });
-    
-    const responseText = response.choices[0].message.content.trim();
-    console.log('\n📥 LLM Response:');
-    console.log(responseText);
-    
-    // Parse JSON
-    let mapping;
-    try {
-      // Remove markdown code blocks if present
-      const cleanJson = responseText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-      mapping = JSON.parse(cleanJson);
-      
-      console.log('\n✅ SPEAKER MAPPING:');
-      for (const [generic, real] of Object.entries(mapping)) {
-        console.log(`   ${generic} → ${real}`);
-      }
-      
-      return mapping;
-      
-    } catch (parseError) {
-      console.error('❌ Failed to parse LLM response:', parseError.message);
-      console.log('Raw response:', responseText);
-      return null;
-    }
-    
-  } catch (error) {
-    console.error('❌ LLM mapping error:', error.message);
-    return null;
-  }
-}
-// Process calendar event - UPDATED with duplicate prevention
 async function processCalendarEvent(eventId) {
   try {
     // Check if we've already processed this event
@@ -1056,59 +953,106 @@ async function sendSummaryViaN8n(eventId, sessionId) {
     console.log('='.repeat(80));
     
     // Get conversation history (Deepgram - correct order)
-    const history = conversationHistory.get(sessionId) || [];
+    const deepgramHistory = conversationHistory.get(sessionId) || [];
     
-    if (history.length === 0) {
+    if (deepgramHistory.length === 0) {
       console.log('⚠️  No conversation to summarize');
       return;
     }
     
-    console.log(`📊 conversationHistory has ${history.length} messages`);
-    console.log(`📊 recallConversationHistory has ${recallConversationHistory.get(sessionId)?.length || 0} messages`);
+    // Get Recall history (has real names)
+    const recallHistory = recallConversationHistory.get(sessionId) || [];
     
-    // Map speaker names using LLM
-    console.log('\n🤖 Using LLM to map speaker names...');
-    const speakerMapping = await mapSpeakerNamesWithLLM(sessionId);
+    console.log(`📊 conversationHistory has ${deepgramHistory.length} messages`);
+    console.log(`📊 recallConversationHistory has ${recallHistory.length} messages`);
     
-    // Replace speaker labels with real names
-    let finalHistory;
-    if (speakerMapping) {
-      console.log('\n✅ Applying name mapping to conversation history...');
-      finalHistory = history.map(msg => ({
-        ...msg,
-        speaker: speakerMapping[msg.speaker] || msg.speaker
-      }));
-      
-      console.log('\n📋 FINAL HISTORY (with real names):');
-      finalHistory.forEach((msg, idx) => {
-        console.log(`   [${idx + 1}] ${msg.speaker}: "${msg.content}"`);
-      });
-    } else {
-      console.log('⚠️  Using original speaker labels (mapping failed)');
-      finalHistory = history;
-    }
+    // Format both histories for LLM
+    const deepgramText = deepgramHistory.map(msg => 
+      `${msg.speaker}: ${msg.content}`
+    ).join('\n');
     
-    // Format full transcript with REAL NAMES
-    const fullTranscript = finalHistory.map(msg => {
-      const time = new Date(msg.timestamp).toLocaleTimeString();
-      return `[${time}] ${msg.speaker}: ${msg.content}`;
-    }).join('\n\n');
+    const recallText = recallHistory.map(msg => 
+      `${msg.speaker}: ${msg.content}`
+    ).join('\n');
     
-    console.log('\n📝 FINAL TRANSCRIPT (with real names):');
+    console.log('\n📜 DEEPGRAM TRANSCRIPT (correct order):');
     console.log('┌' + '─'.repeat(78) + '┐');
-    const previewLines = fullTranscript.split('\n').slice(0, 10);
-    previewLines.forEach(line => {
+    deepgramText.split('\n').slice(0, 10).forEach(line => {
       console.log('│ ' + line.substring(0, 77).padEnd(77) + '│');
     });
-    if (fullTranscript.split('\n').length > 10) {
+    console.log('└' + '─'.repeat(78) + '┘');
+    
+    console.log('\n📜 RECALL TRANSCRIPT (has real names):');
+    console.log('┌' + '─'.repeat(78) + '┐');
+    recallText.split('\n').slice(0, 10).forEach(line => {
+      console.log('│ ' + line.substring(0, 77).padEnd(77) + '│');
+    });
+    console.log('└' + '─'.repeat(78) + '┘');
+    
+    // Use LLM to generate final transcript with real names
+    console.log('\n🤖 Using LLM to generate final transcript with real names...');
+    
+    const transcriptResponse = await groq.chat.completions.create({
+      model: 'openai/gpt-oss-20b',
+      messages: [
+        {
+          role: 'system',
+          content: `You are a transcript generator. You will receive TWO versions of the same conversation:
+
+1. DEEPGRAM TRANSCRIPT: Has the CORRECT order and timing, but uses generic labels like "Speaker 0", "Speaker 1", or sometimes labels everyone as "Speaker 0"
+2. RECALL TRANSCRIPT: Has REAL participant names, but may have wrong order or grouped sentences
+
+Your task:
+- Use the DEEPGRAM transcript as the source of truth for ORDER and CONTENT
+- Look at the RECALL transcript to identify real participant names
+- Match the content to figure out who said what
+- Generate the EXACT SAME transcript as Deepgram, but replace speaker labels with real names
+- Keep "AI Assistant" as "AI Assistant"
+
+Output format:
+[Timestamp] Real Name: exact text from deepgram
+[Timestamp] Real Name: exact text from deepgram
+[Timestamp] AI Assistant: exact text from deepgram
+
+Rules:
+- DO NOT change the order of messages
+- DO NOT change the text content
+- ONLY replace speaker labels with real names
+- If you can't identify a speaker, keep the original label
+- Match based on what they said, not the order`
+        },
+        {
+          role: 'user',
+          content: `DEEPGRAM TRANSCRIPT (correct order - use this as base):
+${deepgramText}
+
+RECALL TRANSCRIPT (has real names - use this to identify speakers):
+${recallText}
+
+Generate the final transcript using Deepgram's order and content, but with real participant names from Recall.`
+        }
+      ],
+      max_completion_tokens: 2000,
+      temperature: 0.1,
+      top_p: 0.5
+    });
+    
+    const fullTranscript = transcriptResponse.choices[0].message.content.trim();
+    
+    console.log('\n✅ LLM GENERATED FINAL TRANSCRIPT:');
+    console.log('┌' + '─'.repeat(78) + '┐');
+    fullTranscript.split('\n').slice(0, 15).forEach(line => {
+      console.log('│ ' + line.substring(0, 77).padEnd(77) + '│');
+    });
+    if (fullTranscript.split('\n').length > 15) {
       console.log('│ ' + '... (more lines)'.padEnd(77) + '│');
     }
     console.log('└' + '─'.repeat(78) + '┘');
     
-    console.log(`\n📝 Transcript length: ${fullTranscript.length} characters`);
-    console.log(`💬 Total messages: ${finalHistory.length}`);
+    console.log(`\n📝 Final transcript length: ${fullTranscript.length} characters`);
+    console.log(`💬 Total lines: ${fullTranscript.split('\n').length}`);
     
-    // Generate summary using GPT-OSS-20B
+    // Generate summary using the final transcript
     console.log('\n🤖 Generating summary with GPT-OSS-20B...');
     const summaryResponse = await groq.chat.completions.create({
       model: 'openai/gpt-oss-20b',
@@ -1136,7 +1080,7 @@ async function sendSummaryViaN8n(eventId, sessionId) {
     console.log('✅ Summary generated');
     console.log('\n📄 SUMMARY PREVIEW:');
     console.log('┌' + '─'.repeat(78) + '┐');
-    const summaryPreview = summary.substring(0, 200) + '...';
+    const summaryPreview = summary.substring(0, 200);
     summaryPreview.split('\n').forEach(line => {
       console.log('│ ' + line.substring(0, 77).padEnd(77) + '│');
     });
@@ -1192,16 +1136,6 @@ async function sendSummaryViaN8n(eventId, sessionId) {
     if (participantEmails.length === 0) {
       console.log('\n⚠️  No participants found in calendar attendees!');
       console.log('   Summary generated but not sent - no recipients');
-      return;
-    }
-    
-    console.log(`📧 Found ${participantEmails.length} participants from meeting`);
-    console.log('   Emails:', participantEmails.join(', '));
-    
-    if (participantEmails.length === 0) {
-      console.log('⚠️  No participants with emails found in meeting');
-      console.log('   Summary generated but not sent - no recipients');
-      console.log('   NOTE: Participants may have joined anonymously or Recall.ai could not capture emails');
       return;
     }
     
