@@ -69,6 +69,7 @@ console.log('📅 Google Calendar client initialized');
 const deepgramConnections = new Map();
 const audioResponses = new Map();
 const conversationHistory = new Map();
+const recallConversationHistory = new Map(); // NEW: For Recall.ai transcripts with real names
 const processedEvents = new Map(); // NEW: Track processed events
 
 // Store active calendar channel info
@@ -96,7 +97,27 @@ function addToHistory(sessionId, speaker, message) {
   
   conversationHistory.set(sessionId, history);
 }
-
+// Helper function to add messages to Recall conversation history with REAL speaker names
+function addToRecallHistory(sessionId, speaker, message) {
+  if (!recallConversationHistory.has(sessionId)) {
+    recallConversationHistory.set(sessionId, []);
+  }
+  
+  const history = recallConversationHistory.get(sessionId);
+  
+  history.push({
+    speaker: speaker,
+    content: message,
+    timestamp: new Date().toISOString()
+  });
+  
+  // Keep last 12 messages for context
+  if (history.length > 12) {
+    history.splice(0, 2);
+  }
+  
+  recallConversationHistory.set(sessionId, history);
+}
 // async function processWithLLMContextAware(sessionId, t0) {
 //   try {
 //     if (!conversationHistory.has(sessionId)) {
@@ -444,7 +465,7 @@ IMPORTANT:
     
     // Add bot's response to history
     addToHistory(sessionId, 'AI Assistant', llmResponse);
-    
+    addToRecallHistory(sessionId, 'AI Assistant', llmResponse);
     console.log(`   After: ${conversationHistory.get(sessionId).length} messages`);
     console.log(`   Added: AI Assistant: "${llmResponse}"`);
     
@@ -460,6 +481,31 @@ IMPORTANT:
     console.error('\n❌ LLM ERROR:', error.message);
     console.error('Full error:', error);
     console.log('\n' + '='.repeat(80) + '\n');
+  }
+}
+// NEW: Process Recall.ai transcripts separately (stores in recallConversationHistory)
+async function processRecallTranscript(sessionId, speaker, transcript) {
+  try {
+    console.log('\n' + '📋'.repeat(40));
+    console.log('📋 PROCESSING RECALL.AI TRANSCRIPT (FOR SUMMARY)');
+    console.log('📋'.repeat(40));
+    console.log(`\n👤 Speaker: ${speaker}`);
+    console.log(`💬 Transcript: "${transcript}"`);
+    
+    // Store in Recall history with REAL name
+    addToRecallHistory(sessionId, speaker, transcript);
+    
+    console.log('\n📚 RECALL CONVERSATION HISTORY UPDATED:');
+    const recallHistory = recallConversationHistory.get(sessionId) || [];
+    recallHistory.forEach((msg, idx) => {
+      console.log(`   [${idx + 1}] ${msg.speaker}: "${msg.content}"`);
+    });
+    
+    console.log('\n✅ Recall transcript stored for summary generation');
+    console.log('📋'.repeat(40) + '\n');
+    
+  } catch (error) {
+    console.error('❌ Error processing Recall transcript:', error.message);
   }
 }
 async function convertToSpeech(sessionId, text, t0) {
@@ -628,50 +674,52 @@ async function deployBotToMeeting(meetingUrl, eventTitle, eventId) {
     console.log('\n🤖 Deploying bot to meeting...');
     console.log('   Meeting URL:', meetingUrl);
     console.log('   Event:', eventTitle);
-    console.log('   Event ID:', eventId);  // ← Added
+    console.log('   Event ID:', eventId);
     
     const clientUrl = "https://zoom-bot-jet.vercel.app";
     const serverUrl = "zoom-bot-pgyj.onrender.com";
- const botConfig = {
-  meeting_url: meetingUrl,
-  bot_name: "James",
-  metadata: {
-    eventId: eventId,
-    sessionId: `session-${eventId}`,
-    timestamp: new Date().toISOString()
-  },
-  recording_config: {
-  transcript: {
-    provider: {
-      recallai_streaming: {
-        language: "en"
+    
+    const botConfig = {
+      meeting_url: meetingUrl,
+      bot_name: "James",
+      metadata: {
+        eventId: eventId,
+        sessionId: `session-${eventId}`,
+        timestamp: new Date().toISOString()
+      },
+      recording_config: {
+        transcript: {
+          provider: {
+            recallai_streaming: {
+              language: "en"  // ← Force English transcription
+            }
+          },
+          diarization: {
+            use_separate_streams_when_available: true
+          }
+        },
+        realtime_endpoints: [
+          {
+            type: "webhook",
+            url: `${PUBLIC_URL}/api/recall-webhook`,
+            events: ["transcript.data", "transcript.partial_data"]
+          }
+        ]
+      },
+      output_media: {
+        camera: {
+          kind: "webpage",
+          config: {
+            url: `${clientUrl}?server=https://${serverUrl}&eventId=${eventId}`
+          }
+        }
+      },
+      variant: {
+        zoom: "web_4_core"
       }
-    },
-      diarization: {
-        use_separate_streams_when_available: true
-      }
-    },
-    realtime_endpoints: [
-      {
-        type: "webhook",
-        url: `${PUBLIC_URL}/api/recall-webhook`,
-        events: ["transcript.data", "transcript.partial_data"]
-      }
-    ]
-  },
-  output_media: {
-    camera: {
-      kind: "webpage",
-      config: {
-        url: `${clientUrl}?server=https://${serverUrl}&eventId=${eventId}`
-      }
-    }
-  },
-  variant: {
-    zoom: "web_4_core"
-  }
-};
-    console.log('🌐 Bot webpage URL:', botConfig.output_media.camera.config.url);  // ← Added
+    };
+    
+    console.log('🌐 Bot webpage URL:', botConfig.output_media.camera.config.url);
     
     // UPDATED: Use us-west-2 region
     const response = await fetch('https://us-west-2.recall.ai/api/v1/bot/', {
@@ -906,7 +954,7 @@ async function sendSummaryViaN8n(eventId, sessionId) {
     console.log('='.repeat(80));
     
     // Get conversation history
-    const history = conversationHistory.get(sessionId) || [];
+    const history = recallConversationHistory.get(sessionId) || [];
     
     if (history.length === 0) {
       console.log('⚠️  No conversation to summarize');
@@ -1049,6 +1097,7 @@ if (participantEmails.length === 0) {
     
     // Clean up conversation history
     conversationHistory.delete(sessionId);
+    recallConversationHistory.delete(sessionId);
     console.log('🧹 Cleaned up conversation history');
     
   } catch (error) {
@@ -1180,7 +1229,7 @@ app.post('/api/recall-webhook', async (req, res) => {
       const transcript = words.map(w => w.text).join(' ');
       const isFinal = event === 'transcript.data';
       
-      console.log(`\n📝 ${isFinal ? 'FINAL' : 'PARTIAL'} TRANSCRIPT`);
+      console.log(`\n📝 ${isFinal ? 'FINAL' : 'PARTIAL'} TRANSCRIPT (RECALL.AI)`);
       console.log('   Speaker:', speakerName);
       console.log('   Text:', transcript);
       console.log('   Email:', participant.email || 'N/A');
@@ -1195,33 +1244,30 @@ app.post('/api/recall-webhook', async (req, res) => {
       
       const channel = sessionId;
       
-      // Send interim transcript to frontend
-      pusher.trigger(channel, 'transcript-interim', {
+      // Send interim transcript to frontend (optional - for visual feedback)
+      pusher.trigger(channel, 'recall-transcript-interim', {
         text: transcript,
         speaker: speakerName,
-        is_final: isFinal,
-        speech_final: isFinal
+        is_final: isFinal
       }).catch(err => console.error('Pusher error:', err));
       
       // Process only FINAL transcripts
       if (isFinal) {
-        console.log('   ✅ Processing final transcript...');
-        
-        const t0 = Date.now();
+        console.log('   ✅ Processing final Recall transcript...');
         
         // Send final transcript to frontend
-        pusher.trigger(channel, 'transcript', {
+        pusher.trigger(channel, 'recall-transcript', {
           text: transcript,
           speaker: speakerName
         }).catch(err => console.error('Pusher error:', err));
         
-        // Add to conversation history with REAL NAME
-        console.log(`\n📚 Adding to history: ${speakerName}`);
-        addToHistory(sessionId, speakerName, transcript);
+        // Store in Recall history with REAL NAME (for summary)
+        console.log(`\n📚 Storing in Recall history: ${speakerName}`);
+        await processRecallTranscript(sessionId, speakerName, transcript);
         
-        // Process with LLM
-        console.log('🤖 Sending to LLM...');
-        await processWithLLMContextAware(sessionId, t0);
+        // Do NOT trigger LLM from Recall - Deepgram handles real-time responses
+        console.log('ℹ️  Recall transcript stored, LLM will be triggered by Deepgram');
+        console.log('🎯 Purpose: This transcript will be used for meeting summary with real names');
       }
       
       return;
@@ -1252,6 +1298,7 @@ app.post('/api/recall-webhook', async (req, res) => {
         console.log('   Session ID:', sessionId);
         
         if (eventId && sessionId) {
+          // Wait 5 seconds for any remaining transcripts to arrive
           setTimeout(async () => {
             console.log('📧 Sending meeting summary...');
             await sendSummaryViaN8n(eventId, sessionId);
@@ -1261,7 +1308,7 @@ app.post('/api/recall-webhook', async (req, res) => {
       
       return;
     }
-    // ===================================================
+    // =========================================
     
     console.log('   ℹ️  Ignoring event:', event);
     
@@ -1270,7 +1317,6 @@ app.post('/api/recall-webhook', async (req, res) => {
     console.error('   Full error:', error);
   }
 });
-
 app.post('/api/trigger-calendar-check', async (req, res) => {
   try {
     console.log('\n🔍 Manual calendar check triggered...');
@@ -1331,273 +1377,249 @@ app.post('/api/calendar-watch/stop', async (req, res) => {
   }
 });
 
-// app.post('/api/connect', async (req, res) => {
-//   const { sessionId } = req.body;
-  
-//   console.log('\n🔵 CONNECT:', sessionId);
-  
-//   if (!sessionId) {
-//     return res.status(400).json({ error: 'sessionId required' });
-//   }
-  
-//   try {
-//     console.log('🔌 Connecting to Deepgram STT (Nova-3)...');
-    
-//     const dgConnection = deepgram.listen.live({
-//       model: 'nova-3',
-//       language: 'en-US',
-//       smart_format: true,
-//       interim_results: true,
-//       utterance_end_ms: 1000,
-//       vad_events: true,
-//       encoding: 'linear16',
-//       sample_rate: 24000,
-//       channels: 1,
-//       endpointing: 700,
-//       diarize: true,
-//       punctuate: true
-//     });
-    
-//     let lastProcessedTranscript = '';
-    
-//     dgConnection.on('open', () => {
-//       console.log(`✅ Connected: ${sessionId}`);
-//       deepgramConnections.set(sessionId, dgConnection);
-//       console.log('📊 Total connections:', deepgramConnections.size);
-//     });
-    
-//     dgConnection.on('Results', async(data) => {
-//       const transcript = data.channel.alternatives[0].transcript;
-      
-//       if (transcript && transcript.length > 0) {
-        
-//         let speakerId = "Unknown";
-//         let speakerNumber = null;
-        
-//         console.log('\n' + '='.repeat(80));
-//         console.log('📊 DEEPGRAM RESPONSE RECEIVED');
-//         console.log('='.repeat(80));
-        
-//         console.log('\n🔍 CHECKING FOR DIARIZATION DATA:');
-//         console.log('   Has words array?', !!data.channel.alternatives[0].words);
-        
-//         if (data.channel.alternatives[0].words && data.channel.alternatives[0].words.length > 0) {
-//           const firstWord = data.channel.alternatives[0].words[0];
-//           console.log('   First word object:', JSON.stringify(firstWord, null, 2));
-//           console.log('   Speaker field exists?', firstWord.speaker !== undefined);
-//           console.log('   Speaker value:', firstWord.speaker);
-          
-//           if (firstWord.speaker !== undefined) {
-//             speakerId = `Speaker ${firstWord.speaker}`;
-//             speakerNumber = firstWord.speaker;
-//           }
-          
-//           const allSpeakers = data.channel.alternatives[0].words.map(w => w.speaker).filter(s => s !== undefined);
-//           const uniqueSpeakers = [...new Set(allSpeakers)];
-//           console.log('   Unique speakers in utterance:', uniqueSpeakers);
-          
-//           if (uniqueSpeakers.length > 1) {
-//             console.log('   ⚠️  WARNING: Multiple speakers detected in single utterance!');
-//           }
-//         } else {
-//           console.log('   ❌ NO WORDS ARRAY - Diarization might not be enabled!');
-//         }
-        
-//         console.log('\n📝 TRANSCRIPT DATA:');
-//         console.log('   👤 Speaker ID:', speakerId);
-//         console.log('   💬 Transcript:', `"${transcript}"`);
-//         console.log('   ✅ is_final:', data.is_final);
-//         console.log('   🔚 speech_final:', data.speech_final);
-        
-//         if (data.duration) {
-//           console.log('   ⏱️  Duration:', (data.duration * 1000).toFixed(2) + 'ms');
-//         }
-        
-//         if (data.speech_final) {
-//           console.log('\n🎯 ENDPOINTING TRIGGERED!');
-//           console.log('   ✅ Detected 700ms of silence');
-//           console.log('   ✅ Complete utterance finalized');
-//         }
-        
-//         console.log('\n' + '-'.repeat(80));
-        
-//         const channel = `session-${sessionId}`;
-        
-//         pusher.trigger(channel, 'transcript-interim', {
-//           text: transcript,
-//           speaker: speakerId,
-//           is_final: data.is_final,
-//           speech_final: data.speech_final
-//         }).catch(err => console.error('Pusher error:', err));
-        
-// if (data.is_final && data.speech_final) {
-  
-//   if (transcript !== lastProcessedTranscript) {
-    
-//     const t0 = Date.now();
-    
-//     console.log('\n' + '🚀'.repeat(40));
-//     console.log('🚀 PROCESSING COMPLETE UTTERANCE (NORMAL PATH)');
-//     console.log('🚀'.repeat(40));
-//     console.log(`\n👤 Speaker: ${speakerId}`);
-//     console.log(`💬 Transcript: "${transcript}"`);
-    
-//     const t_stt_end = Date.now();
-//     console.log(`\n⏱️  [${t_stt_end - t0}ms] STT Processing Complete`);
-    
-//     pusher.trigger(channel, 'transcript', {
-//       text: transcript,
-//       speaker: speakerId
-//     }).then(() => {
-//       console.log(`✅ Transcript sent to frontend via Pusher`);
-//     }).catch(err => {
-//       console.error('❌ Pusher error:', err);
-//     });
-    
-//     console.log('\n📚 ADDING TO CONVERSATION HISTORY:');
-//     console.log(`   Before: ${conversationHistory.get(sessionId)?.length || 0} messages`);
-    
-//     addToHistory(sessionId, speakerId, transcript);
-    
-//     console.log(`   After: ${conversationHistory.get(sessionId)?.length || 0} messages`);
-//     console.log('\n📋 CURRENT CONVERSATION HISTORY:');
-//     const history = conversationHistory.get(sessionId) || [];
-//     history.forEach((msg, idx) => {
-//       console.log(`   [${idx + 1}] ${msg.speaker}: "${msg.content}"`);
-//     });
-    
-//     console.log('\n🤖 SENDING TO LLM FOR DECISION...');
-//     console.log('-'.repeat(80));
-    
-//     processWithLLMContextAware(sessionId, t0);
-    
-//     lastProcessedTranscript = transcript;
-    
-//   } else {
-//     console.log('\n⚠️  DUPLICATE TRANSCRIPT DETECTED - SKIPPING');
-//     console.log(`   Transcript: "${transcript}"`);
-//   }
-// }
-// else if (data.is_final && !data.speech_final) {
-  
-//   console.log('\n' + '⚠️'.repeat(40));
-//   console.log('⚠️  STUCK DETECTION: is_final=true BUT speech_final=false');
-//   console.log('⚠️'.repeat(40));
-//   console.log(`\n👤 Speaker: ${speakerId}`);
-//   console.log(`💬 Transcript: "${transcript}"`);
-//   console.log(`⏱️  Waiting for speech_final, but calling GPT to check if complete...`);
-  
-//   if (transcript !== lastProcessedTranscript) {
-    
-//     const t_gpt_start = Date.now();
-//     console.log(`\n🔍 CALLING GPT TO CHECK SENTENCE COMPLETENESS...`);
-//     console.log(`   Model: openai/gpt-oss-20b`);
-//     console.log(`   Transcript to check: "${transcript}"`);
-    
-//     try {
-//       const isComplete = await checkIfSentenceComplete(transcript, t_gpt_start);
-      
-//       const t_gpt_end = Date.now();
-//       console.log(`\n⏱️  [${t_gpt_end - t_gpt_start}ms] GPT Check Complete`);
-//       console.log(`📊 Result: ${isComplete ? 'COMPLETE ✅' : 'INCOMPLETE ❌'}`);
-      
-//       if (isComplete) {
-//         console.log('\n✅ GPT CONFIRMED: Sentence is COMPLETE');
-//         console.log('   🔄 OVERRIDING speech_final → true');
-//         console.log('   🚀 Processing as complete utterance...\n');
-        
-//         const t0 = Date.now();
-        
-//         pusher.trigger(channel, 'transcript', {
-//           text: transcript,
-//           speaker: speakerId
-//         }).then(() => {
-//           console.log(`✅ Transcript sent to frontend via Pusher`);
-//         }).catch(err => {
-//           console.error('❌ Pusher error:', err);
-//         });
-        
-//         console.log('\n📚 ADDING TO CONVERSATION HISTORY:');
-//         console.log(`   Before: ${conversationHistory.get(sessionId)?.length || 0} messages`);
-        
-//         addToHistory(sessionId, speakerId, transcript);
-        
-//         console.log(`   After: ${conversationHistory.get(sessionId)?.length || 0} messages`);
-        
-//         console.log('\n🤖 SENDING TO LLM FOR DECISION...');
-//         console.log('-'.repeat(80));
-        
-//         processWithLLMContextAware(sessionId, t0);
-        
-//         lastProcessedTranscript = transcript;
-        
-//       } else {
-//         console.log('\n❌ GPT CONFIRMED: Sentence is INCOMPLETE');
-//         console.log('   ⏳ Keeping speech_final as false');
-//         console.log('   ⏳ Waiting for more audio from user...\n');
-//       }
-      
-//     } catch (error) {
-//       console.error('\n❌ GPT CHECK ERROR:', error.message);
-//       console.log('   ⚠️  Falling back to waiting for speech_final');
-//       console.log('   ⏳ Will wait for next transcript...\n');
-//     }
-    
-//   } else {
-//     console.log('\n⚠️  Already checked this transcript, skipping GPT call');
-//   }
-  
-// } else {
-//   if (!data.is_final) {
-//     console.log('⏳ Not confident yet (is_final: false)');
-//   } else if (!data.speech_final) {
-//     console.log('⏳ User still speaking (speech_final: false)');
-//   }
-// }
-//       }
-//     });
-    
-//     dgConnection.on('error', (error) => {
-//       console.error('❌ STT ERROR:', error.message);
-//     });
-    
-//     dgConnection.on('close', () => {
-//       console.log(`🔴 Disconnected: ${sessionId}`);
-//       deepgramConnections.delete(sessionId);
-//       conversationHistory.delete(sessionId);
-//     });
-    
-//     res.json({ 
-//       success: true, 
-//       sessionId, 
-//       service: 'deepgram',
-//       model: 'nova-3',
-//       llm: 'llama-4-maverick-17b',
-//       diarization: true
-//     });
-//     console.log('✅ Connect response sent');
-    
-//   } catch (error) {
-//     console.error('❌ CONNECT ERROR:', error);
-//     res.status(500).json({ error: error.message });
-//   }
-// });
 app.post('/api/connect', async (req, res) => {
   const { sessionId } = req.body;
   
   console.log('\n🔵 CONNECT:', sessionId);
-  console.log('   ℹ️  Recall.ai will handle all transcription');
   
   if (!sessionId) {
     return res.status(400).json({ error: 'sessionId required' });
   }
   
   try {
-    // Just return success - Recall.ai handles everything
+    console.log('🔌 Connecting to Deepgram STT (Nova-3)...');
+    
+    const dgConnection = deepgram.listen.live({
+      model: 'nova-3',
+      language: 'en-US',
+      smart_format: true,
+      interim_results: true,
+      utterance_end_ms: 1000,
+      vad_events: true,
+      encoding: 'linear16',
+      sample_rate: 24000,
+      channels: 1,
+      endpointing: 700,
+      diarize: true,
+      punctuate: true
+    });
+    
+    let lastProcessedTranscript = '';
+    
+    dgConnection.on('open', () => {
+      console.log(`✅ Connected: ${sessionId}`);
+      deepgramConnections.set(sessionId, dgConnection);
+      console.log('📊 Total connections:', deepgramConnections.size);
+    });
+    
+    dgConnection.on('Results', async(data) => {
+      const transcript = data.channel.alternatives[0].transcript;
+      
+      if (transcript && transcript.length > 0) {
+        
+        let speakerId = "Unknown";
+        let speakerNumber = null;
+        
+        console.log('\n' + '='.repeat(80));
+        console.log('📊 DEEPGRAM RESPONSE RECEIVED');
+        console.log('='.repeat(80));
+        
+        console.log('\n🔍 CHECKING FOR DIARIZATION DATA:');
+        console.log('   Has words array?', !!data.channel.alternatives[0].words);
+        
+        if (data.channel.alternatives[0].words && data.channel.alternatives[0].words.length > 0) {
+          const firstWord = data.channel.alternatives[0].words[0];
+          console.log('   First word object:', JSON.stringify(firstWord, null, 2));
+          console.log('   Speaker field exists?', firstWord.speaker !== undefined);
+          console.log('   Speaker value:', firstWord.speaker);
+          
+          if (firstWord.speaker !== undefined) {
+            speakerId = `Speaker ${firstWord.speaker}`;
+            speakerNumber = firstWord.speaker;
+          }
+          
+          const allSpeakers = data.channel.alternatives[0].words.map(w => w.speaker).filter(s => s !== undefined);
+          const uniqueSpeakers = [...new Set(allSpeakers)];
+          console.log('   Unique speakers in utterance:', uniqueSpeakers);
+          
+          if (uniqueSpeakers.length > 1) {
+            console.log('   ⚠️  WARNING: Multiple speakers detected in single utterance!');
+          }
+        } else {
+          console.log('   ❌ NO WORDS ARRAY - Diarization might not be enabled!');
+        }
+        
+        console.log('\n📝 TRANSCRIPT DATA:');
+        console.log('   👤 Speaker ID:', speakerId);
+        console.log('   💬 Transcript:', `"${transcript}"`);
+        console.log('   ✅ is_final:', data.is_final);
+        console.log('   🔚 speech_final:', data.speech_final);
+        
+        if (data.duration) {
+          console.log('   ⏱️  Duration:', (data.duration * 1000).toFixed(2) + 'ms');
+        }
+        
+        if (data.speech_final) {
+          console.log('\n🎯 ENDPOINTING TRIGGERED!');
+          console.log('   ✅ Detected 700ms of silence');
+          console.log('   ✅ Complete utterance finalized');
+        }
+        
+        console.log('\n' + '-'.repeat(80));
+        
+        const channel = `session-${sessionId}`;
+        
+        pusher.trigger(channel, 'transcript-interim', {
+          text: transcript,
+          speaker: speakerId,
+          is_final: data.is_final,
+          speech_final: data.speech_final
+        }).catch(err => console.error('Pusher error:', err));
+        
+if (data.is_final && data.speech_final) {
+  
+  if (transcript !== lastProcessedTranscript) {
+    
+    const t0 = Date.now();
+    
+    console.log('\n' + '🚀'.repeat(40));
+    console.log('🚀 PROCESSING COMPLETE UTTERANCE (NORMAL PATH)');
+    console.log('🚀'.repeat(40));
+    console.log(`\n👤 Speaker: ${speakerId}`);
+    console.log(`💬 Transcript: "${transcript}"`);
+    
+    const t_stt_end = Date.now();
+    console.log(`\n⏱️  [${t_stt_end - t0}ms] STT Processing Complete`);
+    
+    pusher.trigger(channel, 'transcript', {
+      text: transcript,
+      speaker: speakerId
+    }).then(() => {
+      console.log(`✅ Transcript sent to frontend via Pusher`);
+    }).catch(err => {
+      console.error('❌ Pusher error:', err);
+    });
+    
+    console.log('\n📚 ADDING TO CONVERSATION HISTORY:');
+    console.log(`   Before: ${conversationHistory.get(sessionId)?.length || 0} messages`);
+    
+    addToHistory(sessionId, speakerId, transcript);
+    
+    console.log(`   After: ${conversationHistory.get(sessionId)?.length || 0} messages`);
+    console.log('\n📋 CURRENT CONVERSATION HISTORY:');
+    const history = conversationHistory.get(sessionId) || [];
+    history.forEach((msg, idx) => {
+      console.log(`   [${idx + 1}] ${msg.speaker}: "${msg.content}"`);
+    });
+    
+    console.log('\n🤖 SENDING TO LLM FOR DECISION...');
+    console.log('-'.repeat(80));
+    
+    processWithLLMContextAware(sessionId, t0);
+    
+    lastProcessedTranscript = transcript;
+    
+  } else {
+    console.log('\n⚠️  DUPLICATE TRANSCRIPT DETECTED - SKIPPING');
+    console.log(`   Transcript: "${transcript}"`);
+  }
+}
+else if (data.is_final && !data.speech_final) {
+  
+  console.log('\n' + '⚠️'.repeat(40));
+  console.log('⚠️  STUCK DETECTION: is_final=true BUT speech_final=false');
+  console.log('⚠️'.repeat(40));
+  console.log(`\n👤 Speaker: ${speakerId}`);
+  console.log(`💬 Transcript: "${transcript}"`);
+  console.log(`⏱️  Waiting for speech_final, but calling GPT to check if complete...`);
+  
+  if (transcript !== lastProcessedTranscript) {
+    
+    const t_gpt_start = Date.now();
+    console.log(`\n🔍 CALLING GPT TO CHECK SENTENCE COMPLETENESS...`);
+    console.log(`   Model: openai/gpt-oss-20b`);
+    console.log(`   Transcript to check: "${transcript}"`);
+    
+    try {
+      const isComplete = await checkIfSentenceComplete(transcript, t_gpt_start);
+      
+      const t_gpt_end = Date.now();
+      console.log(`\n⏱️  [${t_gpt_end - t_gpt_start}ms] GPT Check Complete`);
+      console.log(`📊 Result: ${isComplete ? 'COMPLETE ✅' : 'INCOMPLETE ❌'}`);
+      
+      if (isComplete) {
+        console.log('\n✅ GPT CONFIRMED: Sentence is COMPLETE');
+        console.log('   🔄 OVERRIDING speech_final → true');
+        console.log('   🚀 Processing as complete utterance...\n');
+        
+        const t0 = Date.now();
+        
+        pusher.trigger(channel, 'transcript', {
+          text: transcript,
+          speaker: speakerId
+        }).then(() => {
+          console.log(`✅ Transcript sent to frontend via Pusher`);
+        }).catch(err => {
+          console.error('❌ Pusher error:', err);
+        });
+        
+        console.log('\n📚 ADDING TO CONVERSATION HISTORY:');
+        console.log(`   Before: ${conversationHistory.get(sessionId)?.length || 0} messages`);
+        
+        addToHistory(sessionId, speakerId, transcript);
+        
+        console.log(`   After: ${conversationHistory.get(sessionId)?.length || 0} messages`);
+        
+        console.log('\n🤖 SENDING TO LLM FOR DECISION...');
+        console.log('-'.repeat(80));
+        
+        processWithLLMContextAware(sessionId, t0);
+        
+        lastProcessedTranscript = transcript;
+        
+      } else {
+        console.log('\n❌ GPT CONFIRMED: Sentence is INCOMPLETE');
+        console.log('   ⏳ Keeping speech_final as false');
+        console.log('   ⏳ Waiting for more audio from user...\n');
+      }
+      
+    } catch (error) {
+      console.error('\n❌ GPT CHECK ERROR:', error.message);
+      console.log('   ⚠️  Falling back to waiting for speech_final');
+      console.log('   ⏳ Will wait for next transcript...\n');
+    }
+    
+  } else {
+    console.log('\n⚠️  Already checked this transcript, skipping GPT call');
+  }
+  
+} else {
+  if (!data.is_final) {
+    console.log('⏳ Not confident yet (is_final: false)');
+  } else if (!data.speech_final) {
+    console.log('⏳ User still speaking (speech_final: false)');
+  }
+}
+      }
+    });
+    
+    dgConnection.on('error', (error) => {
+      console.error('❌ STT ERROR:', error.message);
+    });
+    
+    dgConnection.on('close', () => {
+      console.log(`🔴 Disconnected: ${sessionId}`);
+      deepgramConnections.delete(sessionId);
+      conversationHistory.delete(sessionId);
+    });
+    
     res.json({ 
       success: true, 
-      sessionId,
-      message: 'Session ready - Recall.ai will handle transcription'
+      sessionId, 
+      service: 'deepgram',
+      model: 'nova-3',
+      llm: 'llama-4-maverick-17b',
+      diarization: true
     });
     console.log('✅ Connect response sent');
     
@@ -1606,9 +1628,30 @@ app.post('/api/connect', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
 app.post('/api/send-audio', async (req, res) => {
-  // Disabled - Recall.ai handles audio capture
-  res.json({ success: true, message: 'Audio handled by Recall.ai' });
+  const { sessionId, audio } = req.body;
+  
+  if (!sessionId || !audio) {
+    return res.status(400).json({ error: 'Missing data' });
+  }
+  
+  const dgConnection = deepgramConnections.get(sessionId);
+  
+  if (!dgConnection) {
+    console.log('❌ No connection for session:', sessionId);
+    console.log('📊 Active sessions:', Array.from(deepgramConnections.keys()));
+    return res.status(400).json({ error: 'No active connection' });
+  }
+  
+  try {
+    const audioBuffer = Buffer.from(audio, 'base64');
+    dgConnection.send(audioBuffer);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('❌ Send audio error:', error);
+    res.status(500).json({ error: 'Send failed' });
+  }
 });
 
 app.get('/api/get-audio/:sessionId', (req, res) => {
