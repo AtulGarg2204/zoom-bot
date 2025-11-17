@@ -640,11 +640,13 @@ async function deployBotToMeeting(meetingUrl, eventTitle, eventId) {
     sessionId: `session-${eventId}`,
     timestamp: new Date().toISOString()
   },
-  recording_config: {  // ← ADD THIS ENTIRE SECTION
-    transcript: {
-      provider: {
-        recallai_streaming: {}
-      },
+  recording_config: {
+  transcript: {
+    provider: {
+      recallai_streaming: {
+        language: "en"
+      }
+    },
       diarization: {
         use_separate_streams_when_available: true
       }
@@ -1329,249 +1331,273 @@ app.post('/api/calendar-watch/stop', async (req, res) => {
   }
 });
 
+// app.post('/api/connect', async (req, res) => {
+//   const { sessionId } = req.body;
+  
+//   console.log('\n🔵 CONNECT:', sessionId);
+  
+//   if (!sessionId) {
+//     return res.status(400).json({ error: 'sessionId required' });
+//   }
+  
+//   try {
+//     console.log('🔌 Connecting to Deepgram STT (Nova-3)...');
+    
+//     const dgConnection = deepgram.listen.live({
+//       model: 'nova-3',
+//       language: 'en-US',
+//       smart_format: true,
+//       interim_results: true,
+//       utterance_end_ms: 1000,
+//       vad_events: true,
+//       encoding: 'linear16',
+//       sample_rate: 24000,
+//       channels: 1,
+//       endpointing: 700,
+//       diarize: true,
+//       punctuate: true
+//     });
+    
+//     let lastProcessedTranscript = '';
+    
+//     dgConnection.on('open', () => {
+//       console.log(`✅ Connected: ${sessionId}`);
+//       deepgramConnections.set(sessionId, dgConnection);
+//       console.log('📊 Total connections:', deepgramConnections.size);
+//     });
+    
+//     dgConnection.on('Results', async(data) => {
+//       const transcript = data.channel.alternatives[0].transcript;
+      
+//       if (transcript && transcript.length > 0) {
+        
+//         let speakerId = "Unknown";
+//         let speakerNumber = null;
+        
+//         console.log('\n' + '='.repeat(80));
+//         console.log('📊 DEEPGRAM RESPONSE RECEIVED');
+//         console.log('='.repeat(80));
+        
+//         console.log('\n🔍 CHECKING FOR DIARIZATION DATA:');
+//         console.log('   Has words array?', !!data.channel.alternatives[0].words);
+        
+//         if (data.channel.alternatives[0].words && data.channel.alternatives[0].words.length > 0) {
+//           const firstWord = data.channel.alternatives[0].words[0];
+//           console.log('   First word object:', JSON.stringify(firstWord, null, 2));
+//           console.log('   Speaker field exists?', firstWord.speaker !== undefined);
+//           console.log('   Speaker value:', firstWord.speaker);
+          
+//           if (firstWord.speaker !== undefined) {
+//             speakerId = `Speaker ${firstWord.speaker}`;
+//             speakerNumber = firstWord.speaker;
+//           }
+          
+//           const allSpeakers = data.channel.alternatives[0].words.map(w => w.speaker).filter(s => s !== undefined);
+//           const uniqueSpeakers = [...new Set(allSpeakers)];
+//           console.log('   Unique speakers in utterance:', uniqueSpeakers);
+          
+//           if (uniqueSpeakers.length > 1) {
+//             console.log('   ⚠️  WARNING: Multiple speakers detected in single utterance!');
+//           }
+//         } else {
+//           console.log('   ❌ NO WORDS ARRAY - Diarization might not be enabled!');
+//         }
+        
+//         console.log('\n📝 TRANSCRIPT DATA:');
+//         console.log('   👤 Speaker ID:', speakerId);
+//         console.log('   💬 Transcript:', `"${transcript}"`);
+//         console.log('   ✅ is_final:', data.is_final);
+//         console.log('   🔚 speech_final:', data.speech_final);
+        
+//         if (data.duration) {
+//           console.log('   ⏱️  Duration:', (data.duration * 1000).toFixed(2) + 'ms');
+//         }
+        
+//         if (data.speech_final) {
+//           console.log('\n🎯 ENDPOINTING TRIGGERED!');
+//           console.log('   ✅ Detected 700ms of silence');
+//           console.log('   ✅ Complete utterance finalized');
+//         }
+        
+//         console.log('\n' + '-'.repeat(80));
+        
+//         const channel = `session-${sessionId}`;
+        
+//         pusher.trigger(channel, 'transcript-interim', {
+//           text: transcript,
+//           speaker: speakerId,
+//           is_final: data.is_final,
+//           speech_final: data.speech_final
+//         }).catch(err => console.error('Pusher error:', err));
+        
+// if (data.is_final && data.speech_final) {
+  
+//   if (transcript !== lastProcessedTranscript) {
+    
+//     const t0 = Date.now();
+    
+//     console.log('\n' + '🚀'.repeat(40));
+//     console.log('🚀 PROCESSING COMPLETE UTTERANCE (NORMAL PATH)');
+//     console.log('🚀'.repeat(40));
+//     console.log(`\n👤 Speaker: ${speakerId}`);
+//     console.log(`💬 Transcript: "${transcript}"`);
+    
+//     const t_stt_end = Date.now();
+//     console.log(`\n⏱️  [${t_stt_end - t0}ms] STT Processing Complete`);
+    
+//     pusher.trigger(channel, 'transcript', {
+//       text: transcript,
+//       speaker: speakerId
+//     }).then(() => {
+//       console.log(`✅ Transcript sent to frontend via Pusher`);
+//     }).catch(err => {
+//       console.error('❌ Pusher error:', err);
+//     });
+    
+//     console.log('\n📚 ADDING TO CONVERSATION HISTORY:');
+//     console.log(`   Before: ${conversationHistory.get(sessionId)?.length || 0} messages`);
+    
+//     addToHistory(sessionId, speakerId, transcript);
+    
+//     console.log(`   After: ${conversationHistory.get(sessionId)?.length || 0} messages`);
+//     console.log('\n📋 CURRENT CONVERSATION HISTORY:');
+//     const history = conversationHistory.get(sessionId) || [];
+//     history.forEach((msg, idx) => {
+//       console.log(`   [${idx + 1}] ${msg.speaker}: "${msg.content}"`);
+//     });
+    
+//     console.log('\n🤖 SENDING TO LLM FOR DECISION...');
+//     console.log('-'.repeat(80));
+    
+//     processWithLLMContextAware(sessionId, t0);
+    
+//     lastProcessedTranscript = transcript;
+    
+//   } else {
+//     console.log('\n⚠️  DUPLICATE TRANSCRIPT DETECTED - SKIPPING');
+//     console.log(`   Transcript: "${transcript}"`);
+//   }
+// }
+// else if (data.is_final && !data.speech_final) {
+  
+//   console.log('\n' + '⚠️'.repeat(40));
+//   console.log('⚠️  STUCK DETECTION: is_final=true BUT speech_final=false');
+//   console.log('⚠️'.repeat(40));
+//   console.log(`\n👤 Speaker: ${speakerId}`);
+//   console.log(`💬 Transcript: "${transcript}"`);
+//   console.log(`⏱️  Waiting for speech_final, but calling GPT to check if complete...`);
+  
+//   if (transcript !== lastProcessedTranscript) {
+    
+//     const t_gpt_start = Date.now();
+//     console.log(`\n🔍 CALLING GPT TO CHECK SENTENCE COMPLETENESS...`);
+//     console.log(`   Model: openai/gpt-oss-20b`);
+//     console.log(`   Transcript to check: "${transcript}"`);
+    
+//     try {
+//       const isComplete = await checkIfSentenceComplete(transcript, t_gpt_start);
+      
+//       const t_gpt_end = Date.now();
+//       console.log(`\n⏱️  [${t_gpt_end - t_gpt_start}ms] GPT Check Complete`);
+//       console.log(`📊 Result: ${isComplete ? 'COMPLETE ✅' : 'INCOMPLETE ❌'}`);
+      
+//       if (isComplete) {
+//         console.log('\n✅ GPT CONFIRMED: Sentence is COMPLETE');
+//         console.log('   🔄 OVERRIDING speech_final → true');
+//         console.log('   🚀 Processing as complete utterance...\n');
+        
+//         const t0 = Date.now();
+        
+//         pusher.trigger(channel, 'transcript', {
+//           text: transcript,
+//           speaker: speakerId
+//         }).then(() => {
+//           console.log(`✅ Transcript sent to frontend via Pusher`);
+//         }).catch(err => {
+//           console.error('❌ Pusher error:', err);
+//         });
+        
+//         console.log('\n📚 ADDING TO CONVERSATION HISTORY:');
+//         console.log(`   Before: ${conversationHistory.get(sessionId)?.length || 0} messages`);
+        
+//         addToHistory(sessionId, speakerId, transcript);
+        
+//         console.log(`   After: ${conversationHistory.get(sessionId)?.length || 0} messages`);
+        
+//         console.log('\n🤖 SENDING TO LLM FOR DECISION...');
+//         console.log('-'.repeat(80));
+        
+//         processWithLLMContextAware(sessionId, t0);
+        
+//         lastProcessedTranscript = transcript;
+        
+//       } else {
+//         console.log('\n❌ GPT CONFIRMED: Sentence is INCOMPLETE');
+//         console.log('   ⏳ Keeping speech_final as false');
+//         console.log('   ⏳ Waiting for more audio from user...\n');
+//       }
+      
+//     } catch (error) {
+//       console.error('\n❌ GPT CHECK ERROR:', error.message);
+//       console.log('   ⚠️  Falling back to waiting for speech_final');
+//       console.log('   ⏳ Will wait for next transcript...\n');
+//     }
+    
+//   } else {
+//     console.log('\n⚠️  Already checked this transcript, skipping GPT call');
+//   }
+  
+// } else {
+//   if (!data.is_final) {
+//     console.log('⏳ Not confident yet (is_final: false)');
+//   } else if (!data.speech_final) {
+//     console.log('⏳ User still speaking (speech_final: false)');
+//   }
+// }
+//       }
+//     });
+    
+//     dgConnection.on('error', (error) => {
+//       console.error('❌ STT ERROR:', error.message);
+//     });
+    
+//     dgConnection.on('close', () => {
+//       console.log(`🔴 Disconnected: ${sessionId}`);
+//       deepgramConnections.delete(sessionId);
+//       conversationHistory.delete(sessionId);
+//     });
+    
+//     res.json({ 
+//       success: true, 
+//       sessionId, 
+//       service: 'deepgram',
+//       model: 'nova-3',
+//       llm: 'llama-4-maverick-17b',
+//       diarization: true
+//     });
+//     console.log('✅ Connect response sent');
+    
+//   } catch (error) {
+//     console.error('❌ CONNECT ERROR:', error);
+//     res.status(500).json({ error: error.message });
+//   }
+// });
 app.post('/api/connect', async (req, res) => {
   const { sessionId } = req.body;
   
   console.log('\n🔵 CONNECT:', sessionId);
+  console.log('   ℹ️  Recall.ai will handle all transcription');
   
   if (!sessionId) {
     return res.status(400).json({ error: 'sessionId required' });
   }
   
   try {
-    console.log('🔌 Connecting to Deepgram STT (Nova-3)...');
-    
-    const dgConnection = deepgram.listen.live({
-      model: 'nova-3',
-      language: 'en-US',
-      smart_format: true,
-      interim_results: true,
-      utterance_end_ms: 1000,
-      vad_events: true,
-      encoding: 'linear16',
-      sample_rate: 24000,
-      channels: 1,
-      endpointing: 700,
-      diarize: true,
-      punctuate: true
-    });
-    
-    let lastProcessedTranscript = '';
-    
-    dgConnection.on('open', () => {
-      console.log(`✅ Connected: ${sessionId}`);
-      deepgramConnections.set(sessionId, dgConnection);
-      console.log('📊 Total connections:', deepgramConnections.size);
-    });
-    
-    dgConnection.on('Results', async(data) => {
-      const transcript = data.channel.alternatives[0].transcript;
-      
-      if (transcript && transcript.length > 0) {
-        
-        let speakerId = "Unknown";
-        let speakerNumber = null;
-        
-        console.log('\n' + '='.repeat(80));
-        console.log('📊 DEEPGRAM RESPONSE RECEIVED');
-        console.log('='.repeat(80));
-        
-        console.log('\n🔍 CHECKING FOR DIARIZATION DATA:');
-        console.log('   Has words array?', !!data.channel.alternatives[0].words);
-        
-        if (data.channel.alternatives[0].words && data.channel.alternatives[0].words.length > 0) {
-          const firstWord = data.channel.alternatives[0].words[0];
-          console.log('   First word object:', JSON.stringify(firstWord, null, 2));
-          console.log('   Speaker field exists?', firstWord.speaker !== undefined);
-          console.log('   Speaker value:', firstWord.speaker);
-          
-          if (firstWord.speaker !== undefined) {
-            speakerId = `Speaker ${firstWord.speaker}`;
-            speakerNumber = firstWord.speaker;
-          }
-          
-          const allSpeakers = data.channel.alternatives[0].words.map(w => w.speaker).filter(s => s !== undefined);
-          const uniqueSpeakers = [...new Set(allSpeakers)];
-          console.log('   Unique speakers in utterance:', uniqueSpeakers);
-          
-          if (uniqueSpeakers.length > 1) {
-            console.log('   ⚠️  WARNING: Multiple speakers detected in single utterance!');
-          }
-        } else {
-          console.log('   ❌ NO WORDS ARRAY - Diarization might not be enabled!');
-        }
-        
-        console.log('\n📝 TRANSCRIPT DATA:');
-        console.log('   👤 Speaker ID:', speakerId);
-        console.log('   💬 Transcript:', `"${transcript}"`);
-        console.log('   ✅ is_final:', data.is_final);
-        console.log('   🔚 speech_final:', data.speech_final);
-        
-        if (data.duration) {
-          console.log('   ⏱️  Duration:', (data.duration * 1000).toFixed(2) + 'ms');
-        }
-        
-        if (data.speech_final) {
-          console.log('\n🎯 ENDPOINTING TRIGGERED!');
-          console.log('   ✅ Detected 700ms of silence');
-          console.log('   ✅ Complete utterance finalized');
-        }
-        
-        console.log('\n' + '-'.repeat(80));
-        
-        const channel = `session-${sessionId}`;
-        
-        pusher.trigger(channel, 'transcript-interim', {
-          text: transcript,
-          speaker: speakerId,
-          is_final: data.is_final,
-          speech_final: data.speech_final
-        }).catch(err => console.error('Pusher error:', err));
-        
-if (data.is_final && data.speech_final) {
-  
-  if (transcript !== lastProcessedTranscript) {
-    
-    const t0 = Date.now();
-    
-    console.log('\n' + '🚀'.repeat(40));
-    console.log('🚀 PROCESSING COMPLETE UTTERANCE (NORMAL PATH)');
-    console.log('🚀'.repeat(40));
-    console.log(`\n👤 Speaker: ${speakerId}`);
-    console.log(`💬 Transcript: "${transcript}"`);
-    
-    const t_stt_end = Date.now();
-    console.log(`\n⏱️  [${t_stt_end - t0}ms] STT Processing Complete`);
-    
-    pusher.trigger(channel, 'transcript', {
-      text: transcript,
-      speaker: speakerId
-    }).then(() => {
-      console.log(`✅ Transcript sent to frontend via Pusher`);
-    }).catch(err => {
-      console.error('❌ Pusher error:', err);
-    });
-    
-    console.log('\n📚 ADDING TO CONVERSATION HISTORY:');
-    console.log(`   Before: ${conversationHistory.get(sessionId)?.length || 0} messages`);
-    
-    addToHistory(sessionId, speakerId, transcript);
-    
-    console.log(`   After: ${conversationHistory.get(sessionId)?.length || 0} messages`);
-    console.log('\n📋 CURRENT CONVERSATION HISTORY:');
-    const history = conversationHistory.get(sessionId) || [];
-    history.forEach((msg, idx) => {
-      console.log(`   [${idx + 1}] ${msg.speaker}: "${msg.content}"`);
-    });
-    
-    console.log('\n🤖 SENDING TO LLM FOR DECISION...');
-    console.log('-'.repeat(80));
-    
-    processWithLLMContextAware(sessionId, t0);
-    
-    lastProcessedTranscript = transcript;
-    
-  } else {
-    console.log('\n⚠️  DUPLICATE TRANSCRIPT DETECTED - SKIPPING');
-    console.log(`   Transcript: "${transcript}"`);
-  }
-}
-else if (data.is_final && !data.speech_final) {
-  
-  console.log('\n' + '⚠️'.repeat(40));
-  console.log('⚠️  STUCK DETECTION: is_final=true BUT speech_final=false');
-  console.log('⚠️'.repeat(40));
-  console.log(`\n👤 Speaker: ${speakerId}`);
-  console.log(`💬 Transcript: "${transcript}"`);
-  console.log(`⏱️  Waiting for speech_final, but calling GPT to check if complete...`);
-  
-  if (transcript !== lastProcessedTranscript) {
-    
-    const t_gpt_start = Date.now();
-    console.log(`\n🔍 CALLING GPT TO CHECK SENTENCE COMPLETENESS...`);
-    console.log(`   Model: openai/gpt-oss-20b`);
-    console.log(`   Transcript to check: "${transcript}"`);
-    
-    try {
-      const isComplete = await checkIfSentenceComplete(transcript, t_gpt_start);
-      
-      const t_gpt_end = Date.now();
-      console.log(`\n⏱️  [${t_gpt_end - t_gpt_start}ms] GPT Check Complete`);
-      console.log(`📊 Result: ${isComplete ? 'COMPLETE ✅' : 'INCOMPLETE ❌'}`);
-      
-      if (isComplete) {
-        console.log('\n✅ GPT CONFIRMED: Sentence is COMPLETE');
-        console.log('   🔄 OVERRIDING speech_final → true');
-        console.log('   🚀 Processing as complete utterance...\n');
-        
-        const t0 = Date.now();
-        
-        pusher.trigger(channel, 'transcript', {
-          text: transcript,
-          speaker: speakerId
-        }).then(() => {
-          console.log(`✅ Transcript sent to frontend via Pusher`);
-        }).catch(err => {
-          console.error('❌ Pusher error:', err);
-        });
-        
-        console.log('\n📚 ADDING TO CONVERSATION HISTORY:');
-        console.log(`   Before: ${conversationHistory.get(sessionId)?.length || 0} messages`);
-        
-        addToHistory(sessionId, speakerId, transcript);
-        
-        console.log(`   After: ${conversationHistory.get(sessionId)?.length || 0} messages`);
-        
-        console.log('\n🤖 SENDING TO LLM FOR DECISION...');
-        console.log('-'.repeat(80));
-        
-        processWithLLMContextAware(sessionId, t0);
-        
-        lastProcessedTranscript = transcript;
-        
-      } else {
-        console.log('\n❌ GPT CONFIRMED: Sentence is INCOMPLETE');
-        console.log('   ⏳ Keeping speech_final as false');
-        console.log('   ⏳ Waiting for more audio from user...\n');
-      }
-      
-    } catch (error) {
-      console.error('\n❌ GPT CHECK ERROR:', error.message);
-      console.log('   ⚠️  Falling back to waiting for speech_final');
-      console.log('   ⏳ Will wait for next transcript...\n');
-    }
-    
-  } else {
-    console.log('\n⚠️  Already checked this transcript, skipping GPT call');
-  }
-  
-} else {
-  if (!data.is_final) {
-    console.log('⏳ Not confident yet (is_final: false)');
-  } else if (!data.speech_final) {
-    console.log('⏳ User still speaking (speech_final: false)');
-  }
-}
-      }
-    });
-    
-    dgConnection.on('error', (error) => {
-      console.error('❌ STT ERROR:', error.message);
-    });
-    
-    dgConnection.on('close', () => {
-      console.log(`🔴 Disconnected: ${sessionId}`);
-      deepgramConnections.delete(sessionId);
-      conversationHistory.delete(sessionId);
-    });
-    
+    // Just return success - Recall.ai handles everything
     res.json({ 
       success: true, 
-      sessionId, 
-      service: 'deepgram',
-      model: 'nova-3',
-      llm: 'llama-4-maverick-17b',
-      diarization: true
+      sessionId,
+      message: 'Session ready - Recall.ai will handle transcription'
     });
     console.log('✅ Connect response sent');
     
@@ -1580,30 +1606,9 @@ else if (data.is_final && !data.speech_final) {
     res.status(500).json({ error: error.message });
   }
 });
-
 app.post('/api/send-audio', async (req, res) => {
-  const { sessionId, audio } = req.body;
-  
-  if (!sessionId || !audio) {
-    return res.status(400).json({ error: 'Missing data' });
-  }
-  
-  const dgConnection = deepgramConnections.get(sessionId);
-  
-  if (!dgConnection) {
-    console.log('❌ No connection for session:', sessionId);
-    console.log('📊 Active sessions:', Array.from(deepgramConnections.keys()));
-    return res.status(400).json({ error: 'No active connection' });
-  }
-  
-  try {
-    const audioBuffer = Buffer.from(audio, 'base64');
-    dgConnection.send(audioBuffer);
-    res.json({ success: true });
-  } catch (error) {
-    console.error('❌ Send audio error:', error);
-    res.status(500).json({ error: 'Send failed' });
-  }
+  // Disabled - Recall.ai handles audio capture
+  res.json({ success: true, message: 'Audio handled by Recall.ai' });
 });
 
 app.get('/api/get-audio/:sessionId', (req, res) => {
