@@ -782,7 +782,109 @@ app.post('/api/test-summary', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+async function mapSpeakerNamesWithLLM(sessionId) {
+  try {
+    console.log('\n🔍 MAPPING SPEAKER NAMES WITH LLM');
+    console.log('='.repeat(80));
+    
+    const deepgramHistory = conversationHistory.get(sessionId) || [];
+    const recallHistory = recallConversationHistory.get(sessionId) || [];
+    
+    if (deepgramHistory.length === 0 || recallHistory.length === 0) {
+      console.log('⚠️  Insufficient data for mapping');
+      return null;
+    }
+    
+    // Format both histories
+    const deepgramText = deepgramHistory.map(msg => 
+      `${msg.speaker}: ${msg.content}`
+    ).join('\n');
+    
+    const recallText = recallHistory.map(msg => 
+      `${msg.speaker}: ${msg.content}`
+    ).join('\n');
+    
+    console.log('\n📊 DEEPGRAM HISTORY (Correct Order):');
+    console.log(deepgramText);
+    
+    console.log('\n📊 RECALL HISTORY (Has Real Names):');
+    console.log(recallText);
+    
+    // Call LLM for mapping
+    const response = await groq.chat.completions.create({
+      model: 'openai/gpt-oss-20b',
+      messages: [
+        {
+          role: 'system',
+          content: `You are a transcript analyzer. Your job is to map generic speaker labels (Speaker 0, Speaker 1) to real participant names.
 
+You will receive TWO conversation transcripts:
+1. DEEPGRAM TRANSCRIPT: Has correct order and timing, but uses generic labels (Speaker 0, Speaker 1, etc.)
+2. RECALL TRANSCRIPT: Has real participant names, but may have wrong order or combined sentences
+
+Your task:
+- Analyze the content of what each speaker said
+- Match "Speaker 0", "Speaker 1" etc. from Deepgram to real names from Recall
+- Return ONLY a JSON object mapping generic labels to real names
+
+Response format (JSON ONLY, no explanations):
+{
+  "Speaker 0": "Real Name Here",
+  "Speaker 1": "Another Real Name",
+  "AI Assistant": "AI Assistant"
+}
+
+Rules:
+- Match based on content similarity (not just order)
+- If unsure, use best guess based on context
+- Always keep "AI Assistant" as "AI Assistant"
+- Return valid JSON only`
+        },
+        {
+          role: 'user',
+          content: `DEEPGRAM TRANSCRIPT (correct order, generic labels):
+${deepgramText}
+
+RECALL TRANSCRIPT (has real names, may have wrong order):
+${recallText}
+
+Map the speaker labels to real names and return ONLY JSON.`
+        }
+      ],
+      max_completion_tokens: 300,
+      temperature: 0.1,
+      top_p: 0.5
+    });
+    
+    const responseText = response.choices[0].message.content.trim();
+    console.log('\n📥 LLM Response:');
+    console.log(responseText);
+    
+    // Parse JSON
+    let mapping;
+    try {
+      // Remove markdown code blocks if present
+      const cleanJson = responseText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+      mapping = JSON.parse(cleanJson);
+      
+      console.log('\n✅ SPEAKER MAPPING:');
+      for (const [generic, real] of Object.entries(mapping)) {
+        console.log(`   ${generic} → ${real}`);
+      }
+      
+      return mapping;
+      
+    } catch (parseError) {
+      console.error('❌ Failed to parse LLM response:', parseError.message);
+      console.log('Raw response:', responseText);
+      return null;
+    }
+    
+  } catch (error) {
+    console.error('❌ LLM mapping error:', error.message);
+    return null;
+  }
+}
 // Process calendar event - UPDATED with duplicate prevention
 async function processCalendarEvent(eventId) {
   try {
@@ -953,22 +1055,58 @@ async function sendSummaryViaN8n(eventId, sessionId) {
     console.log('\n📧 SENDING MEETING SUMMARY VIA N8N');
     console.log('='.repeat(80));
     
-    // Get conversation history
-    const history = recallConversationHistory.get(sessionId) || [];
+    // Get conversation history (Deepgram - correct order)
+    const history = conversationHistory.get(sessionId) || [];
     
     if (history.length === 0) {
       console.log('⚠️  No conversation to summarize');
       return;
     }
     
-    // Format full transcript
-    const fullTranscript = history.map(msg => {
+    console.log(`📊 conversationHistory has ${history.length} messages`);
+    console.log(`📊 recallConversationHistory has ${recallConversationHistory.get(sessionId)?.length || 0} messages`);
+    
+    // Map speaker names using LLM
+    console.log('\n🤖 Using LLM to map speaker names...');
+    const speakerMapping = await mapSpeakerNamesWithLLM(sessionId);
+    
+    // Replace speaker labels with real names
+    let finalHistory;
+    if (speakerMapping) {
+      console.log('\n✅ Applying name mapping to conversation history...');
+      finalHistory = history.map(msg => ({
+        ...msg,
+        speaker: speakerMapping[msg.speaker] || msg.speaker
+      }));
+      
+      console.log('\n📋 FINAL HISTORY (with real names):');
+      finalHistory.forEach((msg, idx) => {
+        console.log(`   [${idx + 1}] ${msg.speaker}: "${msg.content}"`);
+      });
+    } else {
+      console.log('⚠️  Using original speaker labels (mapping failed)');
+      finalHistory = history;
+    }
+    
+    // Format full transcript with REAL NAMES
+    const fullTranscript = finalHistory.map(msg => {
       const time = new Date(msg.timestamp).toLocaleTimeString();
       return `[${time}] ${msg.speaker}: ${msg.content}`;
     }).join('\n\n');
     
-    console.log(`📝 Transcript length: ${fullTranscript.length} characters`);
-    console.log(`💬 Total messages: ${history.length}`);
+    console.log('\n📝 FINAL TRANSCRIPT (with real names):');
+    console.log('┌' + '─'.repeat(78) + '┐');
+    const previewLines = fullTranscript.split('\n').slice(0, 10);
+    previewLines.forEach(line => {
+      console.log('│ ' + line.substring(0, 77).padEnd(77) + '│');
+    });
+    if (fullTranscript.split('\n').length > 10) {
+      console.log('│ ' + '... (more lines)'.padEnd(77) + '│');
+    }
+    console.log('└' + '─'.repeat(78) + '┘');
+    
+    console.log(`\n📝 Transcript length: ${fullTranscript.length} characters`);
+    console.log(`💬 Total messages: ${finalHistory.length}`);
     
     // Generate summary using GPT-OSS-20B
     console.log('\n🤖 Generating summary with GPT-OSS-20B...');
@@ -996,6 +1134,13 @@ async function sendSummaryViaN8n(eventId, sessionId) {
     
     const summary = summaryResponse.choices[0].message.content.trim();
     console.log('✅ Summary generated');
+    console.log('\n📄 SUMMARY PREVIEW:');
+    console.log('┌' + '─'.repeat(78) + '┐');
+    const summaryPreview = summary.substring(0, 200) + '...';
+    summaryPreview.split('\n').forEach(line => {
+      console.log('│ ' + line.substring(0, 77).padEnd(77) + '│');
+    });
+    console.log('└' + '─'.repeat(78) + '┘');
     
     // Get meeting details from Calendar
     console.log('\n📅 Getting meeting details from Calendar...');
@@ -1007,43 +1152,48 @@ async function sendSummaryViaN8n(eventId, sessionId) {
     const meetingTitle = event.data.summary || 'Meeting';
     const meetingDate = event.data.start?.dateTime || event.data.start?.date;
     const meetingUrl = extractMeetingUrl(event.data);
-console.log('   Meeting URL:', meetingUrl);
+    console.log('   Meeting Title:', meetingTitle);
+    console.log('   Meeting Date:', meetingDate);
+    console.log('   Meeting URL:', meetingUrl);
+    
     // Calculate duration
     const startTime = new Date(event.data.start?.dateTime);
     const endTime = new Date(event.data.end?.dateTime);
     const durationMinutes = Math.round((endTime - startTime) / 1000 / 60);
     const duration = `${durationMinutes} minutes`;
-   // Get all calendar attendees (exclude declined)
-console.log('\n📅 Getting participants from Calendar attendees...');
-const attendees = event.data.attendees || [];
-
-let participantEmails = attendees
-  .filter(attendee => {
-    return attendee.email && 
-           attendee.responseStatus !== 'declined';
-  })
-  .map(attendee => attendee.email);
-
-console.log(`   Found ${participantEmails.length} attendees from calendar`);
-
-// Add creator/host if not already in list
-if (event.data.creator?.email) {
-  if (!participantEmails.includes(event.data.creator.email)) {
-    participantEmails.push(event.data.creator.email);
-    console.log(`   ✅ Added creator: ${event.data.creator.email}`);
-  }
-}
-
-participantEmails = [...new Set(participantEmails)];
-
-console.log(`\n📧 Final participant count: ${participantEmails.length}`);
-console.log('   Emails:', participantEmails.join(', '));
-
-if (participantEmails.length === 0) {
-  console.log('\n⚠️  No participants found in calendar attendees!');
-  console.log('   Summary generated but not sent - no recipients');
-  return;
-}
+    console.log('   Duration:', duration);
+    
+    // Get all calendar attendees (exclude declined)
+    console.log('\n📅 Getting participants from Calendar attendees...');
+    const attendees = event.data.attendees || [];
+    
+    let participantEmails = attendees
+      .filter(attendee => {
+        return attendee.email && 
+               attendee.responseStatus !== 'declined';
+      })
+      .map(attendee => attendee.email);
+    
+    console.log(`   Found ${participantEmails.length} attendees from calendar`);
+    
+    // Add creator/host if not already in list
+    if (event.data.creator?.email) {
+      if (!participantEmails.includes(event.data.creator.email)) {
+        participantEmails.push(event.data.creator.email);
+        console.log(`   ✅ Added creator: ${event.data.creator.email}`);
+      }
+    }
+    
+    participantEmails = [...new Set(participantEmails)];
+    
+    console.log(`\n📧 Final participant count: ${participantEmails.length}`);
+    console.log('   Emails:', participantEmails.join(', '));
+    
+    if (participantEmails.length === 0) {
+      console.log('\n⚠️  No participants found in calendar attendees!');
+      console.log('   Summary generated but not sent - no recipients');
+      return;
+    }
     
     console.log(`📧 Found ${participantEmails.length} participants from meeting`);
     console.log('   Emails:', participantEmails.join(', '));
@@ -1076,6 +1226,14 @@ if (participantEmails.length === 0) {
       eventId: eventId
     };
     
+    console.log('\n📦 n8n Payload:');
+    console.log('   Meeting Title:', n8nPayload.meetingTitle);
+    console.log('   Meeting Date:', n8nPayload.meetingDate);
+    console.log('   Duration:', n8nPayload.duration);
+    console.log('   Participants:', n8nPayload.participantEmails.length);
+    console.log('   Transcript Length:', n8nPayload.fullTranscript.length, 'chars');
+    console.log('   Summary Length:', n8nPayload.summary.length, 'chars');
+    
     const response = await fetch(n8nWebhookUrl, {
       method: 'POST',
       headers: {
@@ -1095,13 +1253,15 @@ if (participantEmails.length === 0) {
     console.log('   Response:', result);
     console.log('='.repeat(80) + '\n');
     
-    // Clean up conversation history
+    // Clean up BOTH conversation histories
     conversationHistory.delete(sessionId);
     recallConversationHistory.delete(sessionId);
-    console.log('🧹 Cleaned up conversation history');
+    console.log('🧹 Cleaned up conversationHistory');
+    console.log('🧹 Cleaned up recallConversationHistory');
     
   } catch (error) {
     console.error('❌ Error sending summary via n8n:', error.message);
+    console.error('Full error:', error);
   }
 }
 // Clean up old processed events every hour
