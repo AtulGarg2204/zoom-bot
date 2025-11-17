@@ -1705,7 +1705,7 @@ else if (data.is_final && !data.speech_final) {
     dgConnection.on('close', () => {
       console.log(`🔴 Disconnected: ${sessionId}`);
       deepgramConnections.delete(sessionId);
-      conversationHistory.delete(sessionId);
+      // conversationHistory.delete(sessionId);
     });
     
     res.json({ 
