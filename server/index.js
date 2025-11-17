@@ -1176,7 +1176,7 @@ async function fetchRecallTranscript(transcriptId) {
     console.log('='.repeat(80));
     console.log('   Transcript ID:', transcriptId);
     
-    // Fetch the transcript using the transcript ID
+    // Fetch the transcript metadata
     const transcriptResponse = await fetch(
       `https://us-west-2.recall.ai/api/v1/transcript/${transcriptId}/`,
       {
@@ -1195,77 +1195,100 @@ async function fetchRecallTranscript(transcriptId) {
     
     const transcriptData = await transcriptResponse.json();
     
-    console.log('   ✅ Transcript fetched successfully');
+    console.log('   ✅ Transcript metadata fetched');
     console.log('   Status:', transcriptData.status?.code);
-    console.log('   Download URL available:', !!transcriptData.data?.download_url);
     
-    // Fetch the actual transcript data from download URL
-    if (!transcriptData.data?.download_url) {
-      console.log('   ❌ No download URL found');
-      return null;
-    }
+    // DEBUG: Log the full response structure
+    console.log('\n🔍 DEBUG: Full transcript response:');
+    console.log(JSON.stringify(transcriptData, null, 2));
     
-    console.log('   📥 Downloading transcript data...');
-    const dataResponse = await fetch(transcriptData.data.download_url);
-    
-    if (!dataResponse.ok) {
-      console.log('   ❌ Failed to download transcript data');
-      return null;
-    }
-    
-    const transcriptContent = await dataResponse.json();
-    
-    console.log('   ✅ Transcript data downloaded');
-    console.log('   Total words:', transcriptContent.words?.length || 0);
-    
-    // Group words by speaker to create messages
-    const messages = [];
-    let currentSpeaker = null;
-    let currentText = [];
-    
-    for (const word of transcriptContent.words || []) {
-      const speakerName = word.speaker_name || `Speaker ${word.speaker}`;
+    // Check if transcript has a download URL
+    if (transcriptData.data?.download_url) {
+      console.log('   📥 Downloading transcript from URL...');
       
-      if (currentSpeaker !== speakerName) {
-        // New speaker, save previous message
-        if (currentSpeaker && currentText.length > 0) {
-          messages.push({
-            speaker: currentSpeaker,
-            text: currentText.join(' ')
-          });
-        }
-        
-        currentSpeaker = speakerName;
-        currentText = [word.text];
-      } else {
-        currentText.push(word.text);
+      const dataResponse = await fetch(transcriptData.data.download_url);
+      
+      if (!dataResponse.ok) {
+        console.log('   ❌ Failed to download transcript data:', dataResponse.status);
+        return null;
       }
-    }
-    
-    // Add last message
-    if (currentSpeaker && currentText.length > 0) {
-      messages.push({
-        speaker: currentSpeaker,
-        text: currentText.join(' ')
+      
+      const transcriptContent = await dataResponse.json();
+      
+      console.log('   ✅ Transcript content downloaded');
+      console.log('   Content keys:', Object.keys(transcriptContent));
+      
+      // DEBUG: Log structure
+      console.log('\n🔍 DEBUG: Downloaded content structure:');
+      console.log(JSON.stringify(transcriptContent, null, 2).substring(0, 500));
+      
+      // Check different possible word locations
+      const words = transcriptContent.words || 
+                    transcriptContent.transcript?.words || 
+                    transcriptContent.data?.words || 
+                    [];
+      
+      console.log('   Total words found:', words.length);
+      
+      if (words.length === 0) {
+        console.log('   ⚠️  No words found in transcript data');
+        return null;
+      }
+      
+      // Group words by speaker
+      const messages = [];
+      let currentSpeaker = null;
+      let currentText = [];
+      
+      for (const word of words) {
+        const speakerName = word.speaker_name || `Speaker ${word.speaker}`;
+        
+        if (currentSpeaker !== speakerName) {
+          if (currentSpeaker && currentText.length > 0) {
+            messages.push({
+              speaker: currentSpeaker,
+              text: currentText.join(' ')
+            });
+          }
+          
+          currentSpeaker = speakerName;
+          currentText = [word.text];
+        } else {
+          currentText.push(word.text);
+        }
+      }
+      
+      // Add last message
+      if (currentSpeaker && currentText.length > 0) {
+        messages.push({
+          speaker: currentSpeaker,
+          text: currentText.join(' ')
+        });
+      }
+      
+      console.log('   📊 Processed into', messages.length, 'messages');
+      console.log('\n📜 RECALL TRANSCRIPT PREVIEW:');
+      console.log('┌' + '─'.repeat(78) + '┐');
+      messages.slice(0, 5).forEach(msg => {
+        const line = `${msg.speaker}: ${msg.text.substring(0, 50)}...`;
+        console.log('│ ' + line.substring(0, 77).padEnd(77) + '│');
       });
+      if (messages.length > 5) {
+        console.log('│ ' + `... (${messages.length - 5} more messages)`.padEnd(77) + '│');
+      }
+      console.log('└' + '─'.repeat(78) + '┘');
+      
+      return messages;
+      
+    } else {
+      console.log('   ❌ No download_url in transcript data');
+      console.log('   Available keys:', Object.keys(transcriptData.data || {}));
+      return null;
     }
-    
-    console.log('   📊 Processed into', messages.length, 'messages');
-    console.log('\n📜 RECALL TRANSCRIPT PREVIEW:');
-    console.log('┌' + '─'.repeat(78) + '┐');
-    messages.slice(0, 5).forEach(msg => {
-      const line = `${msg.speaker}: ${msg.text.substring(0, 50)}...`;
-      console.log('│ ' + line.substring(0, 77).padEnd(77) + '│');
-    });
-    if (messages.length > 5) {
-      console.log('│ ' + `... (${messages.length - 5} more messages)`.padEnd(77) + '│');
-    }
-    console.log('└' + '─'.repeat(78) + '┘');
-    
-    return messages;
     
   } catch (error) {
     console.error('❌ Error fetching Recall transcript:', error.message);
+    console.error('   Stack:', error.stack);
     return null;
   }
 }
