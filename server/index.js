@@ -1176,8 +1176,10 @@ async function fetchRecallTranscript(botId) {
     console.log('='.repeat(80));
     console.log('   Bot ID:', botId);
     
-    const response = await fetch(
-      `https://us-west-2.recall.ai/api/v1/bot/${botId}/transcript`,
+    // First, get the transcript ID from the bot
+    console.log('   Step 1: Fetching bot details to get transcript ID...');
+    const botResponse = await fetch(
+      `https://us-west-2.recall.ai/api/v1/bot/${botId}`,
       {
         headers: {
           'Authorization': `Token ${RECALL_API_KEY}`,
@@ -1186,13 +1188,41 @@ async function fetchRecallTranscript(botId) {
       }
     );
     
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.log('   ❌ Failed to fetch transcript:', response.status, errorText);
+    if (!botResponse.ok) {
+      const errorText = await botResponse.text();
+      console.log('   ❌ Failed to fetch bot details:', botResponse.status, errorText);
       return null;
     }
     
-    const transcriptData = await response.json();
+    const botData = await botResponse.json();
+    const transcriptId = botData.transcript_id;
+    
+    if (!transcriptId) {
+      console.log('   ❌ No transcript_id found in bot data');
+      return null;
+    }
+    
+    console.log('   ✅ Transcript ID:', transcriptId);
+    
+    // Now fetch the actual transcript using the transcript ID
+    console.log('   Step 2: Fetching transcript data...');
+    const transcriptResponse = await fetch(
+      `https://us-west-2.recall.ai/api/v1/transcript/${transcriptId}/`,
+      {
+        headers: {
+          'Authorization': `Token ${RECALL_API_KEY}`,
+          'Accept': 'application/json'
+        }
+      }
+    );
+    
+    if (!transcriptResponse.ok) {
+      const errorText = await transcriptResponse.text();
+      console.log('   ❌ Failed to fetch transcript:', transcriptResponse.status, errorText);
+      return null;
+    }
+    
+    const transcriptData = await transcriptResponse.json();
     
     console.log('   ✅ Transcript fetched successfully');
     console.log('   Total words:', transcriptData.words?.length || 0);
@@ -1248,6 +1278,7 @@ async function fetchRecallTranscript(botId) {
     return null;
   }
 }
+
 // Clean up old processed events every hour
 setInterval(() => {
   const oneHourAgo = Date.now() - (60 * 60 * 1000);
