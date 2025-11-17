@@ -900,7 +900,7 @@ async function sendSummaryViaN8n(eventId, sessionId, botId) {
     
     // Fetch complete Recall transcript from API
     console.log('\n🔄 Fetching complete Recall transcript...');
-    const recallMessages = await fetchRecallTranscript(botId);
+      const recallMessages = await fetchRecallTranscript(transcriptId);
     
     if (!recallMessages || recallMessages.length === 0) {
       console.log('⚠️  Could not fetch Recall transcript, using Deepgram only');
@@ -1170,42 +1170,13 @@ Generate the final transcript. Use Deepgram's order and content exactly, but rep
     console.error('Full error:', error);
   }
 }
-async function fetchRecallTranscript(botId) {
+async function fetchRecallTranscript(transcriptId) {
   try {
     console.log('\n📥 FETCHING COMPLETE RECALL TRANSCRIPT FROM API');
     console.log('='.repeat(80));
-    console.log('   Bot ID:', botId);
+    console.log('   Transcript ID:', transcriptId);
     
-    // First, get the transcript ID from the bot
-    console.log('   Step 1: Fetching bot details to get transcript ID...');
-    const botResponse = await fetch(
-      `https://us-west-2.recall.ai/api/v1/bot/${botId}`,
-      {
-        headers: {
-          'Authorization': `Token ${RECALL_API_KEY}`,
-          'Accept': 'application/json'
-        }
-      }
-    );
-    
-    if (!botResponse.ok) {
-      const errorText = await botResponse.text();
-      console.log('   ❌ Failed to fetch bot details:', botResponse.status, errorText);
-      return null;
-    }
-    
-    const botData = await botResponse.json();
-    const transcriptId = botData.transcript_id;
-    
-    if (!transcriptId) {
-      console.log('   ❌ No transcript_id found in bot data');
-      return null;
-    }
-    
-    console.log('   ✅ Transcript ID:', transcriptId);
-    
-    // Now fetch the actual transcript using the transcript ID
-    console.log('   Step 2: Fetching transcript data...');
+    // Fetch the transcript using the transcript ID
     const transcriptResponse = await fetch(
       `https://us-west-2.recall.ai/api/v1/transcript/${transcriptId}/`,
       {
@@ -1225,14 +1196,34 @@ async function fetchRecallTranscript(botId) {
     const transcriptData = await transcriptResponse.json();
     
     console.log('   ✅ Transcript fetched successfully');
-    console.log('   Total words:', transcriptData.words?.length || 0);
+    console.log('   Status:', transcriptData.status?.code);
+    console.log('   Download URL available:', !!transcriptData.data?.download_url);
+    
+    // Fetch the actual transcript data from download URL
+    if (!transcriptData.data?.download_url) {
+      console.log('   ❌ No download URL found');
+      return null;
+    }
+    
+    console.log('   📥 Downloading transcript data...');
+    const dataResponse = await fetch(transcriptData.data.download_url);
+    
+    if (!dataResponse.ok) {
+      console.log('   ❌ Failed to download transcript data');
+      return null;
+    }
+    
+    const transcriptContent = await dataResponse.json();
+    
+    console.log('   ✅ Transcript data downloaded');
+    console.log('   Total words:', transcriptContent.words?.length || 0);
     
     // Group words by speaker to create messages
     const messages = [];
     let currentSpeaker = null;
     let currentText = [];
     
-    for (const word of transcriptData.words || []) {
+    for (const word of transcriptContent.words || []) {
       const speakerName = word.speaker_name || `Speaker ${word.speaker}`;
       
       if (currentSpeaker !== speakerName) {
@@ -1381,11 +1372,15 @@ app.post('/api/recall-webhook', async (req, res) => {
   try {
     const { event, data } = req.body;
     const bot_id = data?.bot?.id;
+    const recording_id = data?.recording?.id;
+    const transcript_id = data?.transcript?.id;
     const eventData = data?.data;
     
     console.log('\n📬 RECALL.AI WEBHOOK RECEIVED');
     console.log('   Event:', event);
     console.log('   Bot ID:', bot_id);
+    console.log('   Recording ID:', recording_id);
+    console.log('   Transcript ID:', transcript_id);
     
     // Acknowledge immediately
     res.status(200).json({ received: true });
@@ -1395,12 +1390,65 @@ app.post('/api/recall-webhook', async (req, res) => {
       return;
     }
     
-    if (event === 'bot.call_ended') {
-      console.log('🏁 BOT CALL ENDED - MEETING FINISHED');
-      console.log('   Reason:', eventData?.sub_code || 'unknown');
+    // Handle recording.done - Create async transcript
+    if (event === 'recording.done') {
+      console.log('📼 RECORDING DONE - Creating async transcript...');
+      
+      if (!recording_id) {
+        console.log('   ❌ No recording ID found');
+        return;
+      }
+      
+      // Create async transcript
+      try {
+        const transcriptResponse = await fetch(
+          `https://us-west-2.recall.ai/api/v1/recording/${recording_id}/create_transcript/`,
+          {
+            method: 'POST',
+            headers: {
+              'Authorization': `Token ${RECALL_API_KEY}`,
+              'Accept': 'application/json',
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              provider: {
+                recallai_async: {
+                  language_code: 'en'
+                }
+              },
+              diarization: {
+                use_separate_streams_when_available: true
+              }
+            })
+          }
+        );
+        
+        if (transcriptResponse.ok) {
+          const result = await transcriptResponse.json();
+          console.log('   ✅ Async transcript job created');
+          console.log('   Transcript ID:', result.id);
+        } else {
+          const errorText = await transcriptResponse.text();
+          console.log('   ❌ Failed to create transcript:', transcriptResponse.status, errorText);
+        }
+      } catch (error) {
+        console.error('   ❌ Error creating transcript:', error.message);
+      }
+      
+      return;
+    }
+    
+    // Handle transcript.done - Transcript is ready
+    if (event === 'transcript.done') {
+      console.log('📝 TRANSCRIPT DONE - Ready to fetch!');
+      
+      if (!transcript_id) {
+        console.log('   ❌ No transcript ID found');
+        return;
+      }
       
       // Fetch bot details to get metadata
-      console.log('   📥 Fetching bot metadata from Recall.ai...');
+      console.log('   📥 Fetching bot metadata...');
       
       const botResponse = await fetch(`https://us-west-2.recall.ai/api/v1/bot/${bot_id}`, {
         method: 'GET',
@@ -1422,20 +1470,28 @@ app.post('/api/recall-webhook', async (req, res) => {
       console.log('   ✅ Retrieved from bot metadata:');
       console.log('      Event ID:', eventId);
       console.log('      Session ID:', sessionId);
-      console.log('      Bot ID:', bot_id);
+      console.log('      Transcript ID:', transcript_id);
       
-      if (eventId && sessionId) {
-        // Wait 30 seconds for Recall to finish processing transcripts
+      if (eventId && sessionId && transcript_id) {
+        // Wait 5 seconds then generate summary
         setTimeout(async () => {
-          console.log('📧 Automatically sending meeting summary...');
-          await sendSummaryViaN8n(eventId, sessionId, bot_id);  // ← Pass bot_id
-        }, 30000);  // ← Changed from 5s to 30s
+          console.log('📧 Generating meeting summary with transcript...');
+          await sendSummaryViaN8n(eventId, sessionId, transcript_id);
+        }, 5000);
       } else {
-        console.log('   ⚠️  Missing eventId or sessionId in bot metadata');
+        console.log('   ⚠️  Missing required data');
       }
-    } else {
-      console.log('   ℹ️  Ignoring event:', event);
+      
+      return;
     }
+    
+    // Handle bot.call_ended (just log it, wait for recording.done)
+    if (event === 'bot.call_ended') {
+      console.log('🏁 BOT CALL ENDED - Waiting for recording.done...');
+      return;
+    }
+    
+    console.log('   ℹ️  Ignoring event:', event);
     
   } catch (error) {
     console.error('❌ Recall webhook error:', error.message);
