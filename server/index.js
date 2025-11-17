@@ -69,7 +69,6 @@ console.log('📅 Google Calendar client initialized');
 const deepgramConnections = new Map();
 const audioResponses = new Map();
 const conversationHistory = new Map();
-const recallConversationHistory = new Map(); // NEW: For Recall.ai transcripts with real names
 const processedEvents = new Map(); // NEW: Track processed events
 
 // Store active calendar channel info
@@ -97,27 +96,7 @@ function addToHistory(sessionId, speaker, message) {
   
   conversationHistory.set(sessionId, history);
 }
-// Helper function to add messages to Recall conversation history with REAL speaker names
-function addToRecallHistory(sessionId, speaker, message) {
-  if (!recallConversationHistory.has(sessionId)) {
-    recallConversationHistory.set(sessionId, []);
-  }
-  
-  const history = recallConversationHistory.get(sessionId);
-  
-  history.push({
-    speaker: speaker,
-    content: message,
-    timestamp: new Date().toISOString()
-  });
-  
-  // Keep last 12 messages for context
-  if (history.length > 12) {
-    history.splice(0, 2);
-  }
-  
-  recallConversationHistory.set(sessionId, history);
-}
+
 // async function processWithLLMContextAware(sessionId, t0) {
 //   try {
 //     if (!conversationHistory.has(sessionId)) {
@@ -465,7 +444,7 @@ IMPORTANT:
     
     // Add bot's response to history
     addToHistory(sessionId, 'AI Assistant', llmResponse);
-    addToRecallHistory(sessionId, 'AI Assistant', llmResponse);
+    
     console.log(`   After: ${conversationHistory.get(sessionId).length} messages`);
     console.log(`   Added: AI Assistant: "${llmResponse}"`);
     
@@ -481,31 +460,6 @@ IMPORTANT:
     console.error('\n❌ LLM ERROR:', error.message);
     console.error('Full error:', error);
     console.log('\n' + '='.repeat(80) + '\n');
-  }
-}
-// NEW: Process Recall.ai transcripts separately (stores in recallConversationHistory)
-async function processRecallTranscript(sessionId, speaker, transcript) {
-  try {
-    console.log('\n' + '📋'.repeat(40));
-    console.log('📋 PROCESSING RECALL.AI TRANSCRIPT (FOR SUMMARY)');
-    console.log('📋'.repeat(40));
-    console.log(`\n👤 Speaker: ${speaker}`);
-    console.log(`💬 Transcript: "${transcript}"`);
-    
-    // Store in Recall history with REAL name
-    addToRecallHistory(sessionId, speaker, transcript);
-    
-    console.log('\n📚 RECALL CONVERSATION HISTORY UPDATED:');
-    const recallHistory = recallConversationHistory.get(sessionId) || [];
-    recallHistory.forEach((msg, idx) => {
-      console.log(`   [${idx + 1}] ${msg.speaker}: "${msg.content}"`);
-    });
-    
-    console.log('\n✅ Recall transcript stored for summary generation');
-    console.log('📋'.repeat(40) + '\n');
-    
-  } catch (error) {
-    console.error('❌ Error processing Recall transcript:', error.message);
   }
 }
 async function convertToSpeech(sessionId, text, t0) {
@@ -674,52 +628,33 @@ async function deployBotToMeeting(meetingUrl, eventTitle, eventId) {
     console.log('\n🤖 Deploying bot to meeting...');
     console.log('   Meeting URL:', meetingUrl);
     console.log('   Event:', eventTitle);
-    console.log('   Event ID:', eventId);
+    console.log('   Event ID:', eventId);  // ← Added
     
     const clientUrl = "https://zoom-bot-jet.vercel.app";
     const serverUrl = "zoom-bot-pgyj.onrender.com";
     
-    const botConfig = {
-      meeting_url: meetingUrl,
-      bot_name: "James",
-      metadata: {
-        eventId: eventId,
-        sessionId: `session-${eventId}`,
-        timestamp: new Date().toISOString()
-      },
-      recording_config: {
-        transcript: {
-          provider: {
-            recallai_streaming: {
-              language: "en"  // ← Force English transcription
-            }
-          },
-          diarization: {
-            use_separate_streams_when_available: true
-          }
-        },
-        realtime_endpoints: [
-          {
-            type: "webhook",
-            url: `${PUBLIC_URL}/api/recall-webhook`,
-            events: ["transcript.data", "transcript.partial_data"]
-          }
-        ]
-      },
-      output_media: {
-        camera: {
-          kind: "webpage",
-          config: {
-            url: `${clientUrl}?server=https://${serverUrl}&eventId=${eventId}`
-          }
-        }
-      },
-      variant: {
-        zoom: "web_4_core"
+  const botConfig = {
+  meeting_url: meetingUrl,
+  bot_name: "James",
+  metadata: {
+    eventId: eventId,
+    sessionId: `session-${eventId}`,
+    timestamp: new Date().toISOString()
+  },
+  output_media: {
+    camera: {
+      kind: "webpage",
+      config: {
+        url: `${clientUrl}?server=https://${serverUrl}&eventId=${eventId}`
       }
-    };
+    }
+  },
+  variant: {
+    zoom: "web_4_core"
+  }
+};
     
-    console.log('🌐 Bot webpage URL:', botConfig.output_media.camera.config.url);
+    console.log('🌐 Bot webpage URL:', botConfig.output_media.camera.config.url);  // ← Added
     
     // UPDATED: Use us-west-2 region
     const response = await fetch('https://us-west-2.recall.ai/api/v1/bot/', {
@@ -783,6 +718,7 @@ app.post('/api/test-summary', async (req, res) => {
   }
 });
 
+// Process calendar event - UPDATED with duplicate prevention
 async function processCalendarEvent(eventId) {
   try {
     // Check if we've already processed this event
@@ -947,12 +883,12 @@ const botSessionMap = new Map();
 const botEventMap = new Map();
 const sessionToBotMap = new Map(); 
 
-async function sendSummaryViaN8n(eventId, sessionId) {
+async function sendSummaryViaN8n(eventId, sessionId, botId) {
   try {
     console.log('\n📧 SENDING MEETING SUMMARY VIA N8N');
     console.log('='.repeat(80));
     
-    // Get conversation history (Deepgram - correct order)
+    // Get Deepgram conversation history (correct order)
     const deepgramHistory = conversationHistory.get(sessionId) || [];
     
     if (deepgramHistory.length === 0) {
@@ -960,20 +896,26 @@ async function sendSummaryViaN8n(eventId, sessionId) {
       return;
     }
     
-    // Get Recall history (has real names)
-    const recallHistory = recallConversationHistory.get(sessionId) || [];
+    console.log(`📊 Deepgram history has ${deepgramHistory.length} messages`);
     
-    console.log(`📊 conversationHistory has ${deepgramHistory.length} messages`);
-    console.log(`📊 recallConversationHistory has ${recallHistory.length} messages`);
+    // Fetch complete Recall transcript from API
+    console.log('\n🔄 Fetching complete Recall transcript...');
+    const recallMessages = await fetchRecallTranscript(botId);
     
-    // Format both histories for LLM
+    if (!recallMessages || recallMessages.length === 0) {
+      console.log('⚠️  Could not fetch Recall transcript, using Deepgram only');
+    } else {
+      console.log(`✅ Recall transcript has ${recallMessages.length} messages`);
+    }
+    
+    // Format both for LLM
     const deepgramText = deepgramHistory.map(msg => 
       `${msg.speaker}: ${msg.content}`
     ).join('\n');
     
-    const recallText = recallHistory.map(msg => 
-      `${msg.speaker}: ${msg.content}`
-    ).join('\n');
+    const recallText = recallMessages ? recallMessages.map(msg => 
+      `${msg.speaker}: ${msg.text}`
+    ).join('\n') : '';
     
     console.log('\n📜 DEEPGRAM TRANSCRIPT (correct order):');
     console.log('┌' + '─'.repeat(78) + '┐');
@@ -982,77 +924,125 @@ async function sendSummaryViaN8n(eventId, sessionId) {
     });
     console.log('└' + '─'.repeat(78) + '┘');
     
-    console.log('\n📜 RECALL TRANSCRIPT (has real names):');
-    console.log('┌' + '─'.repeat(78) + '┐');
-    recallText.split('\n').slice(0, 10).forEach(line => {
-      console.log('│ ' + line.substring(0, 77).padEnd(77) + '│');
-    });
-    console.log('└' + '─'.repeat(78) + '┘');
+    if (recallText) {
+      console.log('\n📜 RECALL TRANSCRIPT (has real names):');
+      console.log('┌' + '─'.repeat(78) + '┐');
+      recallText.split('\n').slice(0, 10).forEach(line => {
+        console.log('│ ' + line.substring(0, 77).padEnd(77) + '│');
+      });
+      console.log('└' + '─'.repeat(78) + '┘');
+    }
     
     // Use LLM to generate final transcript with real names
-    console.log('\n🤖 Using LLM to generate final transcript with real names...');
+    let fullTranscript;
     
-    const transcriptResponse = await groq.chat.completions.create({
-      model: 'openai/gpt-oss-20b',
-      messages: [
-        {
-          role: 'system',
-          content: `You are a transcript generator. You will receive TWO versions of the same conversation:
+    if (recallText) {
+      console.log('\n🤖 Using LLM to generate final transcript with real names...');
+      
+      const transcriptResponse = await groq.chat.completions.create({
+        model: 'openai/gpt-oss-20b',
+        messages: [
+          {
+            role: 'system',
+            content: `You are an expert transcript generator. You will receive TWO versions of the same meeting conversation:
 
-1. DEEPGRAM TRANSCRIPT: Has the CORRECT order and timing, but uses generic labels like "Speaker 0", "Speaker 1", or sometimes labels everyone as "Speaker 0"
-2. RECALL TRANSCRIPT: Has REAL participant names, but may have wrong order or grouped sentences
+1. **DEEPGRAM TRANSCRIPT** (Source of Truth):
+   - Has the CORRECT chronological order
+   - Has accurate timing and sequence
+   - Uses generic labels: "Speaker 0", "Speaker 1", "AI Assistant"
+   - This is your PRIMARY source for order and content
 
-Your task:
-- Use the DEEPGRAM transcript as the source of truth for ORDER and CONTENT
-- Look at the RECALL transcript to identify real participant names
-- Match the content to figure out who said what
-- Generate the EXACT SAME transcript as Deepgram, but replace speaker labels with real names
-- Keep "AI Assistant" as "AI Assistant"
+2. **RECALL TRANSCRIPT** (Name Reference):
+   - Has REAL participant names (e.g., "Atul Garg", "John Smith")
+   - May have wrong order or timing
+   - May group sentences differently
+   - May contain multiple languages (English, Hindi, etc.)
+   - Use this ONLY to identify who the speakers are
 
-Output format:
-[Timestamp] Real Name: exact text from deepgram
-[Timestamp] Real Name: exact text from deepgram
-[Timestamp] AI Assistant: exact text from deepgram
+YOUR TASK:
+Generate a clean, final meeting transcript that:
+- Uses the EXACT order from Deepgram (never reorder)
+- Uses the EXACT content from Deepgram (never change what was said)
+- Replaces generic labels with real names from Recall
+- Replaces "AI Assistant" with "James" (the bot's name)
 
-Rules:
-- DO NOT change the order of messages
-- DO NOT change the text content
-- ONLY replace speaker labels with real names
-- If you can't identify a speaker, keep the original label
-- Match based on what they said, not the order`
-        },
-        {
-          role: 'user',
-          content: `DEEPGRAM TRANSCRIPT (correct order - use this as base):
+MATCHING RULES:
+1. Match speakers by analyzing WHAT they said, not by position
+2. Handle multilingual content (English, Hindi, mixed languages)
+3. If someone says similar things in both transcripts, they're the same person
+4. Use context clues (questions/answers, conversation flow) to identify speakers
+5. If you cannot confidently identify a speaker, keep the original label
+
+OUTPUT FORMAT (plain text, one line per message):
+[HH:MM:SS] Real Name: exact message from Deepgram
+[HH:MM:SS] Real Name: exact message from Deepgram  
+[HH:MM:SS] James: exact message from Deepgram
+
+IMPORTANT:
+- Always output SOMETHING, never return empty
+- Use Deepgram's exact wording (don't translate or change)
+- Keep timestamps if available
+- Replace "AI Assistant" → "James"
+- Replace "Speaker 0/1/2" → Real names from Recall
+- Maintain conversation flow and context`
+          },
+          {
+            role: 'user',
+            content: `DEEPGRAM TRANSCRIPT (use this for ORDER and CONTENT):
 ${deepgramText}
 
-RECALL TRANSCRIPT (has real names - use this to identify speakers):
+RECALL TRANSCRIPT (use this to identify REAL NAMES):
 ${recallText}
 
-Generate the final transcript using Deepgram's order and content, but with real participant names from Recall.`
-        }
-      ],
-      max_completion_tokens: 2000,
-      temperature: 0.1,
-      top_p: 0.5
-    });
+Generate the final transcript. Use Deepgram's order and content exactly, but replace speaker labels with real names from Recall. Replace "AI Assistant" with "James".`
+          }
+        ],
+        max_completion_tokens: 2000,
+        temperature: 0.2,
+        top_p: 0.8
+      });
+      
+      fullTranscript = transcriptResponse.choices[0].message.content.trim();
+      
+      console.log('\n📥 RAW LLM RESPONSE:');
+      console.log('Length:', fullTranscript.length, 'characters');
+      console.log('Lines:', fullTranscript.split('\n').length);
+      
+      // Fallback if LLM returns empty
+      if (fullTranscript.length < 10) {
+        console.log('⚠️  LLM returned empty, using Deepgram as fallback');
+        fullTranscript = deepgramHistory.map(msg => {
+          const time = new Date(msg.timestamp).toLocaleTimeString();
+          const speaker = msg.speaker === 'AI Assistant' ? 'James' : msg.speaker;
+          return `[${time}] ${speaker}: ${msg.content}`;
+        }).join('\n\n');
+      }
+      
+    } else {
+      // No Recall data, use Deepgram only
+      console.log('\n📝 Using Deepgram transcript only (no Recall data)');
+      fullTranscript = deepgramHistory.map(msg => {
+        const time = new Date(msg.timestamp).toLocaleTimeString();
+        const speaker = msg.speaker === 'AI Assistant' ? 'James' : msg.speaker;
+        return `[${time}] ${speaker}: ${msg.content}`;
+      }).join('\n\n');
+    }
     
-    const fullTranscript = transcriptResponse.choices[0].message.content.trim();
-    
-    console.log('\n✅ LLM GENERATED FINAL TRANSCRIPT:');
+    console.log('\n✅ FINAL TRANSCRIPT GENERATED:');
     console.log('┌' + '─'.repeat(78) + '┐');
-    fullTranscript.split('\n').slice(0, 15).forEach(line => {
+    const lines = fullTranscript.split('\n').filter(l => l.trim());
+    lines.slice(0, 15).forEach(line => {
       console.log('│ ' + line.substring(0, 77).padEnd(77) + '│');
     });
-    if (fullTranscript.split('\n').length > 15) {
-      console.log('│ ' + '... (more lines)'.padEnd(77) + '│');
+    if (lines.length > 15) {
+      console.log('│ ' + `... (${lines.length - 15} more lines)`.padEnd(77) + '│');
     }
     console.log('└' + '─'.repeat(78) + '┘');
     
     console.log(`\n📝 Final transcript length: ${fullTranscript.length} characters`);
-    console.log(`💬 Total lines: ${fullTranscript.split('\n').length}`);
+    console.log(`💬 Total lines: ${lines.length}`);
     
-    // Generate summary using the final transcript
+    // Generate summary
     console.log('\n🤖 Generating summary with GPT-OSS-20B...');
     const summaryResponse = await groq.chat.completions.create({
       model: 'openai/gpt-oss-20b',
@@ -1064,8 +1054,11 @@ Generate the final transcript using Deepgram's order and content, but with real 
           - Key decisions made
           - Important questions and answers
           - Action items (if any)
+          - Participant names when relevant
           
-          Use HTML tags like <h3>, <p>, <ul>, <li> for structure.`
+          Use HTML tags like <h3>, <p>, <ul>, <li> for structure.
+          
+          IMPORTANT: Even if the meeting was short or informal, create a meaningful summary highlighting what was discussed.`
         },
         {
           role: 'user',
@@ -1078,13 +1071,6 @@ Generate the final transcript using Deepgram's order and content, but with real 
     
     const summary = summaryResponse.choices[0].message.content.trim();
     console.log('✅ Summary generated');
-    console.log('\n📄 SUMMARY PREVIEW:');
-    console.log('┌' + '─'.repeat(78) + '┐');
-    const summaryPreview = summary.substring(0, 200);
-    summaryPreview.split('\n').forEach(line => {
-      console.log('│ ' + line.substring(0, 77).padEnd(77) + '│');
-    });
-    console.log('└' + '─'.repeat(78) + '┘');
     
     // Get meeting details from Calendar
     console.log('\n📅 Getting meeting details from Calendar...');
@@ -1096,16 +1082,12 @@ Generate the final transcript using Deepgram's order and content, but with real 
     const meetingTitle = event.data.summary || 'Meeting';
     const meetingDate = event.data.start?.dateTime || event.data.start?.date;
     const meetingUrl = extractMeetingUrl(event.data);
-    console.log('   Meeting Title:', meetingTitle);
-    console.log('   Meeting Date:', meetingDate);
-    console.log('   Meeting URL:', meetingUrl);
     
     // Calculate duration
     const startTime = new Date(event.data.start?.dateTime);
     const endTime = new Date(event.data.end?.dateTime);
     const durationMinutes = Math.round((endTime - startTime) / 1000 / 60);
     const duration = `${durationMinutes} minutes`;
-    console.log('   Duration:', duration);
     
     // Get all calendar attendees (exclude declined)
     console.log('\n📅 Getting participants from Calendar attendees...');
@@ -1160,14 +1142,6 @@ Generate the final transcript using Deepgram's order and content, but with real 
       eventId: eventId
     };
     
-    console.log('\n📦 n8n Payload:');
-    console.log('   Meeting Title:', n8nPayload.meetingTitle);
-    console.log('   Meeting Date:', n8nPayload.meetingDate);
-    console.log('   Duration:', n8nPayload.duration);
-    console.log('   Participants:', n8nPayload.participantEmails.length);
-    console.log('   Transcript Length:', n8nPayload.fullTranscript.length, 'chars');
-    console.log('   Summary Length:', n8nPayload.summary.length, 'chars');
-    
     const response = await fetch(n8nWebhookUrl, {
       method: 'POST',
       headers: {
@@ -1187,15 +1161,91 @@ Generate the final transcript using Deepgram's order and content, but with real 
     console.log('   Response:', result);
     console.log('='.repeat(80) + '\n');
     
-    // Clean up BOTH conversation histories
+    // Clean up conversation history
     conversationHistory.delete(sessionId);
-    recallConversationHistory.delete(sessionId);
-    console.log('🧹 Cleaned up conversationHistory');
-    console.log('🧹 Cleaned up recallConversationHistory');
+    console.log('🧹 Cleaned up conversation history');
     
   } catch (error) {
     console.error('❌ Error sending summary via n8n:', error.message);
     console.error('Full error:', error);
+  }
+}
+async function fetchRecallTranscript(botId) {
+  try {
+    console.log('\n📥 FETCHING COMPLETE RECALL TRANSCRIPT FROM API');
+    console.log('='.repeat(80));
+    console.log('   Bot ID:', botId);
+    
+    const response = await fetch(
+      `https://us-west-2.recall.ai/api/v1/bot/${botId}/transcript`,
+      {
+        headers: {
+          'Authorization': `Token ${RECALL_API_KEY}`,
+          'Accept': 'application/json'
+        }
+      }
+    );
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.log('   ❌ Failed to fetch transcript:', response.status, errorText);
+      return null;
+    }
+    
+    const transcriptData = await response.json();
+    
+    console.log('   ✅ Transcript fetched successfully');
+    console.log('   Total words:', transcriptData.words?.length || 0);
+    
+    // Group words by speaker to create messages
+    const messages = [];
+    let currentSpeaker = null;
+    let currentText = [];
+    
+    for (const word of transcriptData.words || []) {
+      const speakerName = word.speaker_name || `Speaker ${word.speaker}`;
+      
+      if (currentSpeaker !== speakerName) {
+        // New speaker, save previous message
+        if (currentSpeaker && currentText.length > 0) {
+          messages.push({
+            speaker: currentSpeaker,
+            text: currentText.join(' ')
+          });
+        }
+        
+        currentSpeaker = speakerName;
+        currentText = [word.text];
+      } else {
+        currentText.push(word.text);
+      }
+    }
+    
+    // Add last message
+    if (currentSpeaker && currentText.length > 0) {
+      messages.push({
+        speaker: currentSpeaker,
+        text: currentText.join(' ')
+      });
+    }
+    
+    console.log('   📊 Processed into', messages.length, 'messages');
+    console.log('\n📜 RECALL TRANSCRIPT PREVIEW:');
+    console.log('┌' + '─'.repeat(78) + '┐');
+    messages.slice(0, 5).forEach(msg => {
+      const line = `${msg.speaker}: ${msg.text.substring(0, 50)}...`;
+      console.log('│ ' + line.substring(0, 77).padEnd(77) + '│');
+    });
+    if (messages.length > 5) {
+      console.log('│ ' + `... (${messages.length - 5} more messages)`.padEnd(77) + '│');
+    }
+    console.log('└' + '─'.repeat(78) + '┘');
+    
+    return messages;
+    
+  } catch (error) {
+    console.error('❌ Error fetching Recall transcript:', error.message);
+    return null;
   }
 }
 // Clean up old processed events every hour
@@ -1300,6 +1350,7 @@ app.post('/api/recall-webhook', async (req, res) => {
   try {
     const { event, data } = req.body;
     const bot_id = data?.bot?.id;
+    const eventData = data?.data;
     
     console.log('\n📬 RECALL.AI WEBHOOK RECEIVED');
     console.log('   Event:', event);
@@ -1308,109 +1359,59 @@ app.post('/api/recall-webhook', async (req, res) => {
     // Acknowledge immediately
     res.status(200).json({ received: true });
     
-    // ========== HANDLE REAL-TIME TRANSCRIPTS ==========
-    if (event === 'transcript.data' || event === 'transcript.partial_data') {
-      const transcriptData = data?.data;
-      const participant = transcriptData?.participant;
-      const words = transcriptData?.words || [];
-      
-      if (!participant || words.length === 0) {
-        console.log('   ⚠️  No participant or words data');
-        return;
-      }
-      
-      const speakerName = participant.name || `Participant ${participant.id}`;
-      const transcript = words.map(w => w.text).join(' ');
-      const isFinal = event === 'transcript.data';
-      
-      console.log(`\n📝 ${isFinal ? 'FINAL' : 'PARTIAL'} TRANSCRIPT (RECALL.AI)`);
-      console.log('   Speaker:', speakerName);
-      console.log('   Text:', transcript);
-      console.log('   Email:', participant.email || 'N/A');
-      
-      // Get sessionId from bot metadata
-      const sessionId = data?.bot?.metadata?.sessionId;
-      
-      if (!sessionId) {
-        console.log('   ❌ No sessionId in bot metadata');
-        return;
-      }
-      
-      const channel = sessionId;
-      
-      // Send interim transcript to frontend (optional - for visual feedback)
-      pusher.trigger(channel, 'recall-transcript-interim', {
-        text: transcript,
-        speaker: speakerName,
-        is_final: isFinal
-      }).catch(err => console.error('Pusher error:', err));
-      
-      // Process only FINAL transcripts
-      if (isFinal) {
-        console.log('   ✅ Processing final Recall transcript...');
-        
-        // Send final transcript to frontend
-        pusher.trigger(channel, 'recall-transcript', {
-          text: transcript,
-          speaker: speakerName
-        }).catch(err => console.error('Pusher error:', err));
-        
-        // Store in Recall history with REAL NAME (for summary)
-        console.log(`\n📚 Storing in Recall history: ${speakerName}`);
-        await processRecallTranscript(sessionId, speakerName, transcript);
-        
-        // Do NOT trigger LLM from Recall - Deepgram handles real-time responses
-        console.log('ℹ️  Recall transcript stored, LLM will be triggered by Deepgram');
-        console.log('🎯 Purpose: This transcript will be used for meeting summary with real names');
-      }
-      
+    if (!bot_id) {
+      console.log('   ❌ No bot ID found');
       return;
     }
-    // ===================================================
     
-    // ========== HANDLE MEETING END ==========
     if (event === 'bot.call_ended') {
-      console.log('🏁 BOT CALL ENDED');
+      console.log('🏁 BOT CALL ENDED - MEETING FINISHED');
+      console.log('   Reason:', eventData?.sub_code || 'unknown');
       
-      const botResponse = await fetch(
-        `https://us-west-2.recall.ai/api/v1/bot/${bot_id}`,
-        {
-          method: 'GET',
-          headers: {
-            'Authorization': `Token ${RECALL_API_KEY}`,
-            'Content-Type': 'application/json'
-          }
-        }
-      );
+      // Fetch bot details to get metadata
+      console.log('   📥 Fetching bot metadata from Recall.ai...');
       
-      if (botResponse.ok) {
-        const botData = await botResponse.json();
-        const eventId = botData.metadata?.eventId;
-        const sessionId = botData.metadata?.sessionId;
-        
-        console.log('   Event ID:', eventId);
-        console.log('   Session ID:', sessionId);
-        
-        if (eventId && sessionId) {
-          // Wait 5 seconds for any remaining transcripts to arrive
-          setTimeout(async () => {
-            console.log('📧 Sending meeting summary...');
-            await sendSummaryViaN8n(eventId, sessionId);
-          }, 5000);
+      const botResponse = await fetch(`https://us-west-2.recall.ai/api/v1/bot/${bot_id}`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Token ${RECALL_API_KEY}`,
+          'Content-Type': 'application/json'
         }
+      });
+      
+      if (!botResponse.ok) {
+        console.log('   ❌ Could not fetch bot details');
+        return;
       }
       
-      return;
+      const botData = await botResponse.json();
+      const eventId = botData.metadata?.eventId;
+      const sessionId = botData.metadata?.sessionId;
+      
+      console.log('   ✅ Retrieved from bot metadata:');
+      console.log('      Event ID:', eventId);
+      console.log('      Session ID:', sessionId);
+      console.log('      Bot ID:', bot_id);
+      
+      if (eventId && sessionId) {
+        // Wait 30 seconds for Recall to finish processing transcripts
+        setTimeout(async () => {
+          console.log('📧 Automatically sending meeting summary...');
+          await sendSummaryViaN8n(eventId, sessionId, bot_id);  // ← Pass bot_id
+        }, 30000);  // ← Changed from 5s to 30s
+      } else {
+        console.log('   ⚠️  Missing eventId or sessionId in bot metadata');
+      }
+    } else {
+      console.log('   ℹ️  Ignoring event:', event);
     }
-    // =========================================
-    
-    console.log('   ℹ️  Ignoring event:', event);
     
   } catch (error) {
     console.error('❌ Recall webhook error:', error.message);
     console.error('   Full error:', error);
   }
 });
+// Manual calendar check endpoint
 app.post('/api/trigger-calendar-check', async (req, res) => {
   try {
     console.log('\n🔍 Manual calendar check triggered...');
