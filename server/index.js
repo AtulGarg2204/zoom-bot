@@ -883,7 +883,7 @@ const botSessionMap = new Map();
 const botEventMap = new Map();
 const sessionToBotMap = new Map(); 
 
-async function sendSummaryViaN8n(eventId, sessionId, botId) {
+async function sendSummaryViaN8n(eventId, sessionId, transcriptId) {
   try {
     console.log('\n📧 SENDING MEETING SUMMARY VIA N8N');
     console.log('='.repeat(80));
