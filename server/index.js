@@ -940,68 +940,59 @@ async function sendSummaryViaN8n(eventId, sessionId, transcriptId) {
   console.log('\n🤖 Using LLM to generate final transcript with real names...');
   console.log('🦙 Model: Llama 4 Maverick 17B');
   
-  const transcriptResponse = await groq.chat.completions.create({
-    model: 'meta-llama/llama-4-maverick-17b-128e-instruct',  // ← Changed to Llama
-    messages: [
-      {
-        role: 'system',
-        content: `You are an expert transcript generator. You will receive TWO versions of the same meeting conversation:
+ const transcriptResponse = await groq.chat.completions.create({
+  model: 'meta-llama/llama-4-maverick-17b-128e-instruct',
+  messages: [
+    {
+      role: 'system',
+      content: `You are a transcript formatter. Your ONLY job is to output the final transcript.
 
-1. **DEEPGRAM TRANSCRIPT** (Source of Truth):
-   - Has the CORRECT chronological order
-   - Has accurate timing and sequence
-   - Uses generic labels: "Speaker 0", "Speaker 1", "AI Assistant"
-   - This is your PRIMARY source for order and content
+CRITICAL RULES:
+- DO NOT explain your reasoning
+- DO NOT show your thinking process
+- DO NOT add any commentary
+- OUTPUT ONLY THE TRANSCRIPT LINES
+- NO introductions, NO explanations, NO analysis
 
-2. **RECALL TRANSCRIPT** (Name Reference):
-   - Has REAL participant names (e.g., "Atul Garg", "John Smith")
-   - May have wrong order or timing
-   - May group sentences differently
-   - May contain multiple languages (English, Hindi, etc.)
-   - Use this ONLY to identify who the speakers are
+INPUT:
+1. DEEPGRAM TRANSCRIPT: Correct order, generic speaker labels (Speaker 0, Speaker 1, AI Assistant)
+2. RECALL TRANSCRIPT: Real participant names
 
-YOUR TASK:
-Generate a clean, final meeting transcript that:
-- Uses the EXACT order from Deepgram (never reorder)
-- Uses the EXACT content from Deepgram (never change what was said)
-- Replaces generic labels with real names from Recall
-- Replaces "AI Assistant" with "James" (the bot's name)
+OUTPUT FORMAT (copy this EXACTLY):
+[HH:MM:SS] Real Name: exact message
+[HH:MM:SS] Real Name: exact message
+[HH:MM:SS] James: exact message
 
 MATCHING RULES:
-1. Match speakers by analyzing WHAT they said, not by position
-2. Handle multilingual content (English, Hindi, mixed languages)
-3. If someone says similar things in both transcripts, they're the same person
-4. Use context clues (questions/answers, conversation flow) to identify speakers
-5. If you cannot confidently identify a speaker, keep the original label
+- Match "Speaker 0/1/2" to real names from RECALL by comparing what they said
+- Replace "AI Assistant" with "James"
+- Use DEEPGRAM's exact order and text
+- Handle multilingual content (English, Hindi, etc.)
+- If timestamps missing, use placeholder like [00:00:00]
 
-OUTPUT FORMAT (plain text, one line per message):
-[HH:MM:SS] Real Name: exact message from Deepgram
-[HH:MM:SS] Real Name: exact message from Deepgram  
-[HH:MM:SS] James: exact message from Deepgram
+EXAMPLE OUTPUT (this is what you should produce):
+[12:30:15] Atul Garg: Hey, James. How are you?
+[12:30:17] James: I'm doing great, thanks!
+[12:30:20] Atul Garg: What is your name?
+[12:30:22] James: I'm James, your AI assistant!
 
-IMPORTANT:
-- Always output SOMETHING, never return empty
-- Use Deepgram's exact wording (don't translate or change)
-- Keep timestamps if available
-- Replace "AI Assistant" → "James"
-- Replace "Speaker 0/1/2" → Real names from Recall
-- Maintain conversation flow and context`
-      },
-      {
-        role: 'user',
-        content: `DEEPGRAM TRANSCRIPT (use this for ORDER and CONTENT):
+NOW GENERATE THE TRANSCRIPT - OUTPUT ONLY THE LINES, NOTHING ELSE.`
+    },
+    {
+      role: 'user',
+      content: `DEEPGRAM TRANSCRIPT:
 ${deepgramText}
 
-RECALL TRANSCRIPT (use this to identify REAL NAMES):
+RECALL TRANSCRIPT:
 ${recallText}
 
-Generate the final transcript. Use Deepgram's order and content exactly, but replace speaker labels with real names from Recall. Replace "AI Assistant" with "James".`
-      }
-    ],
-    max_completion_tokens: 2000,
-    temperature: 0.5,  // ← Llama parameter
-    top_p: 1           // ← Llama parameter
-  });
+Output the final transcript now (lines only, no explanation):`
+    }
+  ],
+  max_completion_tokens: 2000,
+  temperature: 0.3,  // ← Lower temperature for more deterministic output
+  top_p: 0.9
+});
       fullTranscript = transcriptResponse.choices[0].message.content.trim();
       
       console.log('\n📥 RAW LLM RESPONSE:');
