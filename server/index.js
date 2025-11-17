@@ -1198,93 +1198,75 @@ async function fetchRecallTranscript(transcriptId) {
     console.log('   ✅ Transcript metadata fetched');
     console.log('   Status:', transcriptData.status?.code);
     
-    // DEBUG: Log the full response structure
-    console.log('\n🔍 DEBUG: Full transcript response:');
-    console.log(JSON.stringify(transcriptData, null, 2));
-    
     // Check if transcript has a download URL
-    if (transcriptData.data?.download_url) {
-      console.log('   📥 Downloading transcript from URL...');
+    if (!transcriptData.data?.download_url) {
+      console.log('   ❌ No download_url in transcript data');
+      return null;
+    }
+    
+    console.log('   📥 Downloading transcript from URL...');
+    
+    const dataResponse = await fetch(transcriptData.data.download_url);
+    
+    if (!dataResponse.ok) {
+      console.log('   ❌ Failed to download transcript data:', dataResponse.status);
+      return null;
+    }
+    
+    const participantData = await dataResponse.json();
+    
+    console.log('   ✅ Transcript content downloaded');
+    console.log('   Number of participants:', participantData.length);
+    
+    // Process each participant's words
+    const messages = [];
+    let totalWords = 0;
+    
+    for (const participantObj of participantData) {
+      const participant = participantObj.participant;
+      const words = participantObj.words || [];
       
-      const dataResponse = await fetch(transcriptData.data.download_url);
+      const speakerName = participant.name || `Participant ${participant.id}`;
       
-      if (!dataResponse.ok) {
-        console.log('   ❌ Failed to download transcript data:', dataResponse.status);
-        return null;
-      }
+      console.log(`   👤 Processing ${speakerName}: ${words.length} words`);
+      totalWords += words.length;
       
-      const transcriptContent = await dataResponse.json();
-      
-      console.log('   ✅ Transcript content downloaded');
-      console.log('   Content keys:', Object.keys(transcriptContent));
-      
-      // DEBUG: Log structure
-      console.log('\n🔍 DEBUG: Downloaded content structure:');
-      console.log(JSON.stringify(transcriptContent, null, 2).substring(0, 500));
-      
-      // Check different possible word locations
-      const words = transcriptContent.words || 
-                    transcriptContent.transcript?.words || 
-                    transcriptContent.data?.words || 
-                    [];
-      
-      console.log('   Total words found:', words.length);
-      
-      if (words.length === 0) {
-        console.log('   ⚠️  No words found in transcript data');
-        return null;
-      }
-      
-      // Group words by speaker
-      const messages = [];
-      let currentSpeaker = null;
+      // Group consecutive words from same speaker
       let currentText = [];
       
       for (const word of words) {
-        const speakerName = word.speaker_name || `Speaker ${word.speaker}`;
-        
-        if (currentSpeaker !== speakerName) {
-          if (currentSpeaker && currentText.length > 0) {
-            messages.push({
-              speaker: currentSpeaker,
-              text: currentText.join(' ')
-            });
-          }
-          
-          currentSpeaker = speakerName;
-          currentText = [word.text];
-        } else {
-          currentText.push(word.text);
-        }
+        currentText.push(word.text);
       }
       
-      // Add last message
-      if (currentSpeaker && currentText.length > 0) {
+      // Add all words from this participant as one message
+      if (currentText.length > 0) {
         messages.push({
-          speaker: currentSpeaker,
+          speaker: speakerName,
           text: currentText.join(' ')
         });
       }
-      
-      console.log('   📊 Processed into', messages.length, 'messages');
-      console.log('\n📜 RECALL TRANSCRIPT PREVIEW:');
-      console.log('┌' + '─'.repeat(78) + '┐');
-      messages.slice(0, 5).forEach(msg => {
-        const line = `${msg.speaker}: ${msg.text.substring(0, 50)}...`;
-        console.log('│ ' + line.substring(0, 77).padEnd(77) + '│');
-      });
-      if (messages.length > 5) {
-        console.log('│ ' + `... (${messages.length - 5} more messages)`.padEnd(77) + '│');
-      }
-      console.log('└' + '─'.repeat(78) + '┘');
-      
-      return messages;
-      
-    } else {
-      console.log('   ❌ No download_url in transcript data');
-      console.log('   Available keys:', Object.keys(transcriptData.data || {}));
+    }
+    
+    console.log('   📊 Total words processed:', totalWords);
+    console.log('   📊 Processed into', messages.length, 'messages');
+    
+    if (messages.length === 0) {
+      console.log('   ⚠️  No messages found in transcript data');
       return null;
     }
+    
+    console.log('\n📜 RECALL TRANSCRIPT PREVIEW:');
+    console.log('┌' + '─'.repeat(78) + '┐');
+    messages.slice(0, 5).forEach(msg => {
+      const line = `${msg.speaker}: ${msg.text.substring(0, 50)}...`;
+      console.log('│ ' + line.substring(0, 77).padEnd(77) + '│');
+    });
+    if (messages.length > 5) {
+      console.log('│ ' + `... (${messages.length - 5} more messages)`.padEnd(77) + '│');
+    }
+    console.log('└' + '─'.repeat(78) + '┘');
+    
+    return messages;
     
   } catch (error) {
     console.error('❌ Error fetching Recall transcript:', error.message);
