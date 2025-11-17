@@ -936,15 +936,16 @@ async function sendSummaryViaN8n(eventId, sessionId, transcriptId) {
     // Use LLM to generate final transcript with real names
     let fullTranscript;
     
-    if (recallText) {
-      console.log('\n🤖 Using LLM to generate final transcript with real names...');
-      
-      const transcriptResponse = await groq.chat.completions.create({
-        model: 'openai/gpt-oss-20b',
-        messages: [
-          {
-            role: 'system',
-            content: `You are an expert transcript generator. You will receive TWO versions of the same meeting conversation:
+   if (recallText) {
+  console.log('\n🤖 Using LLM to generate final transcript with real names...');
+  console.log('🦙 Model: Llama 4 Maverick 17B');
+  
+  const transcriptResponse = await groq.chat.completions.create({
+    model: 'meta-llama/llama-4-maverick-17b-128e-instruct',  // ← Changed to Llama
+    messages: [
+      {
+        role: 'system',
+        content: `You are an expert transcript generator. You will receive TWO versions of the same meeting conversation:
 
 1. **DEEPGRAM TRANSCRIPT** (Source of Truth):
    - Has the CORRECT chronological order
@@ -985,23 +986,22 @@ IMPORTANT:
 - Replace "AI Assistant" → "James"
 - Replace "Speaker 0/1/2" → Real names from Recall
 - Maintain conversation flow and context`
-          },
-          {
-            role: 'user',
-            content: `DEEPGRAM TRANSCRIPT (use this for ORDER and CONTENT):
+      },
+      {
+        role: 'user',
+        content: `DEEPGRAM TRANSCRIPT (use this for ORDER and CONTENT):
 ${deepgramText}
 
 RECALL TRANSCRIPT (use this to identify REAL NAMES):
 ${recallText}
 
 Generate the final transcript. Use Deepgram's order and content exactly, but replace speaker labels with real names from Recall. Replace "AI Assistant" with "James".`
-          }
-        ],
-        max_completion_tokens: 2000,
-        temperature: 0.2,
-        top_p: 0.8
-      });
-      
+      }
+    ],
+    max_completion_tokens: 2000,
+    temperature: 0.5,  // ← Llama parameter
+    top_p: 1           // ← Llama parameter
+  });
       fullTranscript = transcriptResponse.choices[0].message.content.trim();
       
       console.log('\n📥 RAW LLM RESPONSE:');
