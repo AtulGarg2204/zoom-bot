@@ -1656,10 +1656,6 @@ app.post('/api/connect', async (req, res) => {
           speech_final: data.speech_final
         }).catch(err => console.error('Pusher error:', err));
         
-// ============================================================================
-// TRANSCRIPT PROCESSING: BUFFER-FIRST LOGIC
-// ============================================================================
-
 if (data.is_final && data.speech_final) {
   // ========================================================================
   // PATH 1: NORMAL COMPLETION (speech_final=true)
@@ -1685,38 +1681,105 @@ if (data.is_final && data.speech_final) {
       console.log(`   New fragment: "${transcript}"`);
       
       const fullText = buffer.text + ' ' + transcript;
-      console.log(`   ✅ Full text: "${fullText}"`);
+      console.log(`   ✅ Concatenated text: "${fullText}"`);
       
-      // Send full text to frontend
-      pusher.trigger(channel, 'transcript', {
-        text: fullText,
-        speaker: speakerId
-      }).then(() => {
-        console.log(`✅ Complete transcript sent to frontend via Pusher`);
-      }).catch(err => {
-        console.error('❌ Pusher error:', err);
-      });
+      // ✅ CHECK IF CONCATENATED TEXT IS COMPLETE
+      const t_gpt_start = Date.now();
+      console.log('\n🔍 CHECKING IF CONCATENATED TEXT IS COMPLETE...');
+      console.log(`   Model: openai/gpt-oss-20b`);
+      console.log(`   Checking: "${fullText}"`);
       
-      // Add to conversation history
-      console.log('\n📚 ADDING TO CONVERSATION HISTORY:');
-      console.log(`   Before: ${conversationHistory.get(sessionId)?.length || 0} messages`);
-      
-      addToHistory(sessionId, speakerId, fullText);
-      
-      console.log(`   After: ${conversationHistory.get(sessionId)?.length || 0} messages`);
-      console.log(`   Added: ${speakerId}: "${fullText}"`);
-      
-      // Clear buffer
-      incompleteTranscripts.delete(sessionId);
-      console.log('   🧹 Cleared buffer');
-      
-      // Send to LLM
-      console.log('\n🤖 SENDING TO LLM FOR DECISION...');
-      console.log('-'.repeat(80));
-      
-      processWithLLMContextAware(sessionId, t0);
-      
-      lastProcessedTranscript = fullText;
+      try {
+        const isComplete = await checkIfSentenceComplete(fullText, t_gpt_start);
+        
+        const t_gpt_end = Date.now();
+        console.log(`\n⏱️  [${t_gpt_end - t_gpt_start}ms] GPT Check Complete`);
+        console.log(`📊 Result: ${isComplete ? 'COMPLETE ✅' : 'INCOMPLETE ❌'}`);
+        
+        if (isComplete) {
+          console.log('\n✅ GPT CONFIRMED: Concatenated text is COMPLETE');
+          console.log('   🚀 Processing complete sentence...\n');
+          
+          // Send full text to frontend
+          pusher.trigger(channel, 'transcript', {
+            text: fullText,
+            speaker: speakerId
+          }).then(() => {
+            console.log(`✅ Complete transcript sent to frontend via Pusher`);
+          }).catch(err => {
+            console.error('❌ Pusher error:', err);
+          });
+          
+          // Add to conversation history
+          console.log('\n📚 ADDING TO CONVERSATION HISTORY:');
+          console.log(`   Before: ${conversationHistory.get(sessionId)?.length || 0} messages`);
+          
+          addToHistory(sessionId, speakerId, fullText);
+          
+          console.log(`   After: ${conversationHistory.get(sessionId)?.length || 0} messages`);
+          console.log(`   Added: ${speakerId}: "${fullText}"`);
+          
+          // Clear buffer
+          incompleteTranscripts.delete(sessionId);
+          console.log('   🧹 Cleared buffer');
+          
+          // Send to LLM
+          console.log('\n🤖 SENDING TO LLM FOR DECISION...');
+          console.log('-'.repeat(80));
+          
+          processWithLLMContextAware(sessionId, t0);
+          
+          lastProcessedTranscript = fullText;
+          
+        } else {
+          console.log('\n❌ GPT CONFIRMED: Concatenated text is INCOMPLETE');
+          console.log('   📦 Keeping in buffer, waiting for more audio...\n');
+          
+          // Update buffer with concatenated text
+          buffer.text = fullText;
+          buffer.fragments.push(transcript);
+          
+          console.log(`   📦 Updated buffer (${buffer.fragments.length} fragments)`);
+          console.log(`   Buffer now: "${buffer.text}"`);
+          console.log('   ⏳ Waiting for next fragment...');
+          
+          // Check safety limit
+          if (buffer.fragments.length >= 10) {
+            console.log('   ⚠️  WARNING: Buffer has 10+ fragments!');
+            console.log('   🔄 Force processing to prevent infinite buffering...');
+            
+            // Force process
+            pusher.trigger(channel, 'transcript', {
+              text: fullText,
+              speaker: speakerId
+            }).catch(err => console.error('Pusher error:', err));
+            
+            addToHistory(sessionId, speakerId, fullText);
+            processWithLLMContextAware(sessionId, t0);
+            
+            // Clear buffer
+            incompleteTranscripts.delete(sessionId);
+            lastProcessedTranscript = fullText;
+          }
+        }
+        
+      } catch (error) {
+        console.error('\n❌ GPT CHECK ERROR:', error.message);
+        console.log('   ⚠️  Error during completeness check');
+        console.log('   🔄 Falling back to processing as complete...\n');
+        
+        // Fallback: process it anyway
+        pusher.trigger(channel, 'transcript', {
+          text: fullText,
+          speaker: speakerId
+        }).catch(err => console.error('Pusher error:', err));
+        
+        addToHistory(sessionId, speakerId, fullText);
+        processWithLLMContextAware(sessionId, t0);
+        
+        incompleteTranscripts.delete(sessionId);
+        lastProcessedTranscript = fullText;
+      }
       
     } else {
       // No buffer, process normally
