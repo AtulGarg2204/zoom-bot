@@ -69,7 +69,8 @@ console.log('📅 Google Calendar client initialized');
 const deepgramConnections = new Map();
 const audioResponses = new Map();
 const conversationHistory = new Map();
-const processedEvents = new Map(); // NEW: Track processed events
+const processedEvents = new Map();
+const incompleteTranscripts = new Map();
 
 // Store active calendar channel info
 let calendarChannelId = null;
@@ -88,11 +89,7 @@ function addToHistory(sessionId, speaker, message) {
     content: message,
     timestamp: new Date().toISOString()
   });
-  
-  // Keep last 12 messages for context
-  if (history.length > 12) {
-    history.splice(0, 2);
-  }
+
   
   conversationHistory.set(sessionId, history);
 }
@@ -1713,18 +1710,67 @@ else if (data.is_final && !data.speech_final) {
   console.log('⚠️  STUCK DETECTION: is_final=true BUT speech_final=false');
   console.log('⚠️'.repeat(40));
   console.log(`\n👤 Speaker: ${speakerId}`);
-  console.log(`💬 Transcript: "${transcript}"`);
-  console.log(`⏱️  Waiting for speech_final, but calling GPT to check if complete...`);
+  console.log(`💬 New Transcript: "${transcript}"`);
   
   if (transcript !== lastProcessedTranscript) {
     
+    // Get or create buffer for this session
+    if (!incompleteTranscripts.has(sessionId)) {
+      incompleteTranscripts.set(sessionId, { speaker: null, text: '', fragments: [] });
+    }
+    
+    const buffer = incompleteTranscripts.get(sessionId);
+    
+    // Check if speaker changed (new person talking)
+    if (buffer.speaker && buffer.speaker !== speakerId) {
+      console.log(`\n🔄 SPEAKER CHANGED: ${buffer.speaker} → ${speakerId}`);
+      console.log('   Processing previous speaker\'s incomplete text as-is...');
+      
+      // Process old speaker's incomplete text
+      if (buffer.text.length > 0) {
+        console.log(`   📝 Adding incomplete: "${buffer.text}"`);
+        addToHistory(sessionId, buffer.speaker, buffer.text);
+        pusher.trigger(channel, 'transcript', {
+          text: buffer.text,
+          speaker: buffer.speaker
+        }).catch(err => console.error('Pusher error:', err));
+      }
+      
+      // Clear buffer for new speaker
+      buffer.speaker = speakerId;
+      buffer.text = transcript;
+      buffer.fragments = [transcript];
+      console.log(`   🆕 Starting new buffer for ${speakerId}`);
+      
+    } else {
+      // Same speaker or first fragment
+      if (!buffer.speaker) {
+        buffer.speaker = speakerId;
+        buffer.text = transcript;
+        buffer.fragments = [transcript];
+        console.log(`\n🆕 STARTING NEW BUFFER for ${speakerId}`);
+      } else {
+        // Concatenate with existing buffer
+        buffer.fragments.push(transcript);
+        buffer.text = buffer.fragments.join(' ');
+        console.log(`\n📝 CONCATENATING WITH BUFFER`);
+        console.log(`   Previous: "${buffer.fragments.slice(0, -1).join(' ')}"`);
+        console.log(`   New fragment: "${transcript}"`);
+      }
+    }
+    
+    const fullText = buffer.text;
+    console.log(`\n📋 FULL BUFFERED TEXT (${buffer.fragments.length} fragments):`);
+    console.log(`   "${fullText}"`);
+    
+    // Check if this concatenated text is complete
     const t_gpt_start = Date.now();
-    console.log(`\n🔍 CALLING GPT TO CHECK SENTENCE COMPLETENESS...`);
+    console.log(`\n🔍 CALLING GPT TO CHECK COMPLETENESS...`);
     console.log(`   Model: openai/gpt-oss-20b`);
-    console.log(`   Transcript to check: "${transcript}"`);
+    console.log(`   Checking: "${fullText}"`);
     
     try {
-      const isComplete = await checkIfSentenceComplete(transcript, t_gpt_start);
+      const isComplete = await checkIfSentenceComplete(fullText, t_gpt_start);
       
       const t_gpt_end = Date.now();
       console.log(`\n⏱️  [${t_gpt_end - t_gpt_start}ms] GPT Check Complete`);
@@ -1733,15 +1779,16 @@ else if (data.is_final && !data.speech_final) {
       if (isComplete) {
         console.log('\n✅ GPT CONFIRMED: Sentence is COMPLETE');
         console.log('   🔄 OVERRIDING speech_final → true');
-        console.log('   🚀 Processing as complete utterance...\n');
+        console.log('   🚀 Processing complete buffered utterance...\n');
         
         const t0 = Date.now();
         
+        // Send full buffered text to frontend
         pusher.trigger(channel, 'transcript', {
-          text: transcript,
+          text: fullText,
           speaker: speakerId
         }).then(() => {
-          console.log(`✅ Transcript sent to frontend via Pusher`);
+          console.log(`✅ Complete transcript sent to frontend via Pusher`);
         }).catch(err => {
           console.error('❌ Pusher error:', err);
         });
@@ -1749,31 +1796,56 @@ else if (data.is_final && !data.speech_final) {
         console.log('\n📚 ADDING TO CONVERSATION HISTORY:');
         console.log(`   Before: ${conversationHistory.get(sessionId)?.length || 0} messages`);
         
-        addToHistory(sessionId, speakerId, transcript);
+        // Add complete sentence to history
+        addToHistory(sessionId, speakerId, fullText);
         
         console.log(`   After: ${conversationHistory.get(sessionId)?.length || 0} messages`);
+        console.log(`   Added: ${speakerId}: "${fullText}"`);
+        
+        // Clear buffer
+        incompleteTranscripts.set(sessionId, { speaker: null, text: '', fragments: [] });
+        console.log(`   🧹 Cleared buffer`);
         
         console.log('\n🤖 SENDING TO LLM FOR DECISION...');
         console.log('-'.repeat(80));
         
         processWithLLMContextAware(sessionId, t0);
         
-        lastProcessedTranscript = transcript;
+        lastProcessedTranscript = fullText;
         
       } else {
         console.log('\n❌ GPT CONFIRMED: Sentence is INCOMPLETE');
-        console.log('   ⏳ Keeping speech_final as false');
-        console.log('   ⏳ Waiting for more audio from user...\n');
+        console.log(`   📦 Keeping in buffer (${buffer.fragments.length} fragments so far)`);
+        console.log('   ⏳ Waiting for more audio to concatenate...\n');
+        
+        // Check if buffer is getting too large
+        if (buffer.fragments.length > 10) {
+          console.log('   ⚠️  WARNING: Buffer has 10+ fragments, might be stuck!');
+          console.log('   🔄 Force processing as complete...');
+          
+          // Force process it
+          addToHistory(sessionId, speakerId, fullText);
+          pusher.trigger(channel, 'transcript', {
+            text: fullText,
+            speaker: speakerId
+          }).catch(err => console.error('Pusher error:', err));
+          
+          processWithLLMContextAware(sessionId, Date.now());
+          
+          // Clear buffer
+          incompleteTranscripts.set(sessionId, { speaker: null, text: '', fragments: [] });
+          lastProcessedTranscript = fullText;
+        }
       }
       
     } catch (error) {
       console.error('\n❌ GPT CHECK ERROR:', error.message);
-      console.log('   ⚠️  Falling back to waiting for speech_final');
-      console.log('   ⏳ Will wait for next transcript...\n');
+      console.log('   ⚠️  Error during completeness check');
+      console.log('   📦 Keeping current buffer, waiting for more audio...\n');
     }
     
   } else {
-    console.log('\n⚠️  Already checked this transcript, skipping GPT call');
+    console.log('\n⚠️  Already processed this exact transcript, skipping');
   }
   
 } else {
@@ -1790,11 +1862,24 @@ else if (data.is_final && !data.speech_final) {
       console.error('❌ STT ERROR:', error.message);
     });
     
-    dgConnection.on('close', () => {
-      console.log(`🔴 Disconnected: ${sessionId}`);
-      deepgramConnections.delete(sessionId);
-      // conversationHistory.delete(sessionId);
-    });
+   dgConnection.on('close', () => {
+  console.log(`🔴 Disconnected: ${sessionId}`);
+  deepgramConnections.delete(sessionId);
+  
+  // Process any remaining incomplete transcript before clearing
+  const buffer = incompleteTranscripts.get(sessionId);
+  if (buffer && buffer.text.length > 0) {
+    console.log(`📝 Processing remaining buffered text before disconnect: "${buffer.text}"`);
+    addToHistory(sessionId, buffer.speaker, buffer.text);
+  }
+  
+  // Clear buffer
+  incompleteTranscripts.delete(sessionId);
+  console.log(`🧹 Cleared incomplete transcript buffer`);
+  
+  // Don't delete conversationHistory - keep it for summary generation
+  console.log(`📝 Keeping conversation history for summary (${conversationHistory.get(sessionId)?.length || 0} messages)`);
+});
     
     res.json({ 
       success: true, 
