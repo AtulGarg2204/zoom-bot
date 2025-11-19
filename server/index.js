@@ -71,6 +71,7 @@ const audioResponses = new Map();
 const conversationHistory = new Map();
 const processedEvents = new Map();
 const incompleteTranscripts = new Map();
+const audioPlayingStatus = new Map();
 
 // Store active calendar channel info
 let calendarChannelId = null;
@@ -466,6 +467,10 @@ IMPORTANT:
 // }
 async function convertToSpeech(sessionId, text, t0) {
   try {
+    // Set flag: Audio is now playing
+    audioPlayingStatus.set(sessionId, true);
+    console.log('🔊 AUDIO PLAYBACK STARTED - Blocking new transcripts');
+    
     const t_tts_start = Date.now();
     console.log(`[${t_tts_start - t0}ms] TTS START`);
     
@@ -510,8 +515,14 @@ async function convertToSpeech(sessionId, text, t0) {
     }
     audioResponses.get(sessionId).push({ audio: base64Audio, t0: t0 });
     
+    console.log('⏳ Waiting for frontend to finish playing audio...');
+    // Flag will be cleared when frontend calls /api/audio-finished
+    
   } catch (error) {
     console.error('TTS ERROR:', error.message);
+    // Clear flag on error
+    audioPlayingStatus.set(sessionId, false);
+    console.log('❌ TTS Error - Cleared audio playing flag');
   }
 }
 
@@ -1593,15 +1604,25 @@ app.post('/api/connect', async (req, res) => {
     });
     
     dgConnection.on('Results', async(data) => {
-      const transcript = data.channel.alternatives[0].transcript;
-      
-      if (transcript && transcript.length > 0) {
-        
-        let speakerId = "Unknown";
-        let speakerNumber = null;
-        
-        console.log('\n' + '='.repeat(80));
-        console.log('📊 DEEPGRAM RESPONSE RECEIVED');
+  const transcript = data.channel.alternatives[0].transcript;
+  
+  if (transcript && transcript.length > 0) {
+    
+    // ✅ CHECK: Is audio currently playing?
+    const isAudioPlaying = audioPlayingStatus.get(sessionId);
+    
+    if (isAudioPlaying) {
+      console.log('\n🔇 AUDIO IS PLAYING - IGNORING TRANSCRIPT');
+      console.log(`   Ignored: "${transcript}"`);
+      console.log(`   Reason: Bot is currently speaking`);
+      return; // Skip all processing
+    }
+    
+    let speakerId = "Unknown";
+    let speakerNumber = null;
+    
+    console.log('\n' + '='.repeat(80));
+    console.log('📊 DEEPGRAM RESPONSE RECEIVED');
         console.log('='.repeat(80));
         
         console.log('\n🔍 CHECKING FOR DIARIZATION DATA:');
@@ -2036,6 +2057,10 @@ else if (data.is_final && !data.speech_final) {
   incompleteTranscripts.delete(sessionId);
   console.log(`🧹 Cleared incomplete transcript buffer`);
   
+  // Clear audio playing status
+  audioPlayingStatus.delete(sessionId);
+  console.log(`🧹 Cleared audio playing status`);
+  
   // Don't delete conversationHistory - keep it for summary generation
   console.log(`📝 Keeping conversation history for summary (${conversationHistory.get(sessionId)?.length || 0} messages)`);
 });
@@ -2080,7 +2105,21 @@ app.post('/api/send-audio', async (req, res) => {
     res.status(500).json({ error: 'Send failed' });
   }
 });
-
+app.post('/api/audio-finished', (req, res) => {
+  const { sessionId } = req.body;
+  
+  if (!sessionId) {
+    return res.status(400).json({ error: 'sessionId required' });
+  }
+  
+  console.log(`\n🔇 AUDIO PLAYBACK FINISHED: ${sessionId}`);
+  console.log('   ✅ Unblocking transcript processing');
+  
+  // Clear the flag - ready for new transcripts
+  audioPlayingStatus.set(sessionId, false);
+  
+  res.json({ success: true, message: 'Audio playback status cleared' });
+});
 app.get('/api/get-audio/:sessionId', (req, res) => {
   const { sessionId } = req.params;
   const audioData = audioResponses.get(sessionId) || [];

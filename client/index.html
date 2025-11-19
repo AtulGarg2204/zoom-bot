@@ -221,32 +221,47 @@ if (eventId) {
             
             return float32Array;
         }
-
-        async function playAudioImmediate(base64Audio, t0) {
-            try {
-                if (audioCtx.state === 'suspended') {
-                    await audioCtx.resume();
-                }
-                
-                const float32Array = base64ToAudioBuffer(base64Audio);
-                const audioBuffer = audioCtx.createBuffer(1, float32Array.length, 24000);
-                audioBuffer.getChannelData(0).set(float32Array);
-                
-                const source = audioCtx.createBufferSource();
-                source.buffer = audioBuffer;
-                source.connect(audioCtx.destination);
-                source.start(0);
-                
-                const t_play = Date.now();
-                const y = t_play - t0;
-                
-                console.log(`[${y}ms] ⚡ BROWSER STARTS PLAYING (T=Y)`);
-                console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
-                
-            } catch (error) {
-                console.error('PLAYBACK ERROR:', error);
-            }
+async function playAudioImmediate(base64Audio, t0) {
+    try {
+        if (audioCtx.state === 'suspended') {
+            await audioCtx.resume();
         }
+        
+        const float32Array = base64ToAudioBuffer(base64Audio);
+        const audioBuffer = audioCtx.createBuffer(1, float32Array.length, 24000);
+        audioBuffer.getChannelData(0).set(float32Array);
+        
+        const source = audioCtx.createBufferSource();
+        source.buffer = audioBuffer;
+        source.connect(audioCtx.destination);
+        
+        // Notify backend when audio finishes playing
+        source.onended = async () => {
+            console.log('🔇 Audio playback finished - notifying backend');
+            try {
+                await fetch(`${SERVER_URL}/api/audio-finished`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ sessionId })
+                });
+                console.log('✅ Backend notified that audio finished');
+            } catch (error) {
+                console.error('❌ Failed to notify backend:', error);
+            }
+        };
+        
+        source.start(0);
+        
+        const t_play = Date.now();
+        const y = t_play - t0;
+        
+        console.log(`[${y}ms] ⚡ BROWSER STARTS PLAYING (T=Y)`);
+        console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
+        
+    } catch (error) {
+        console.error('PLAYBACK ERROR:', error);
+    }
+}
 
         async function connectToServer() {
             try {
