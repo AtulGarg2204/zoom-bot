@@ -7,7 +7,7 @@ require('dotenv').config();
 const { createClient } = require('@deepgram/sdk');
 const Groq = require('groq-sdk');
 const { google } = require('googleapis');
-
+const { ElevenLabsClient } = require("elevenlabs"); // ← ADD THIS LINE
 const app = express();
 
 const pusher = new Pusher({
@@ -17,7 +17,9 @@ const pusher = new Pusher({
   cluster: process.env.PUSHER_CLUSTER,
   useTLS: true
 });
-
+const elevenlabs = new ElevenLabsClient({ // ← ADD THESE LINES
+  apiKey: process.env.ELEVENLABS_API_KEY
+});
 console.log('🔧 Pusher initialized');
 
 // CORS updated
@@ -270,7 +272,7 @@ IMPORTANT:
     console.log('-'.repeat(80));
     
     // Convert to speech
-    await convertToSpeech(sessionId, llmResponse, t0);
+   await convertToSpeechElevenLabs(sessionId, llmResponse, t0);
     
     console.log('\n' + '='.repeat(80) + '\n');
     
@@ -465,6 +467,65 @@ IMPORTANT:
 //     console.log('\n' + '='.repeat(80) + '\n');
 //   }
 // }
+async function convertToSpeechElevenLabs(sessionId, text, t0) {
+  try {
+    audioPlayingStatus.set(sessionId, true);
+    console.log('🔊 ELEVENLABS - Audio playback started');
+    
+    const t_tts_start = Date.now();
+    console.log(`[${t_tts_start - t0}ms] TTS START (ElevenLabs)`);
+    
+    // Generate speech using ElevenLabs
+    const audio = await elevenlabs.textToSpeech.convert({
+      voice_id: "pNInz6obpgDQGcFmaJgB", // Adam - natural male voice
+      text: text,
+      model_id: "eleven_flash_v2_5", // Fast model (75ms latency)
+      voice_settings: {
+        stability: 0.5,
+        similarity_boost: 0.75,
+        style: 0,
+        use_speaker_boost: false
+      },
+      output_format: "pcm_24000" // Raw PCM audio at 24kHz
+    });
+    
+    // Convert stream to buffer
+    const audioChunks = [];
+    for await (const chunk of audio) {
+      audioChunks.push(chunk);
+    }
+    
+    const audioBuffer = Buffer.concat(audioChunks);
+    const base64Audio = audioBuffer.toString('base64');
+    
+    const t_tts_end = Date.now();
+    console.log(`[${t_tts_end - t0}ms] TTS END (ElevenLabs)`);
+    
+    const channel = `session-${sessionId}`;
+    
+    try {
+      await pusher.trigger(channel, 'audio-received', {
+        message: 'Received audio from ElevenLabs',
+        timestamp: Date.now()
+      });
+      console.log(`✅ Audio-received notification sent`);
+    } catch (err) {
+      console.error('❌ Pusher error:', err);
+    }
+    
+    if (!audioResponses.has(sessionId)) {
+      audioResponses.set(sessionId, []);
+    }
+    audioResponses.get(sessionId).push({ audio: base64Audio, t0: t0 });
+    
+    console.log('⏳ Waiting for frontend to finish playing audio...');
+    
+  } catch (error) {
+    console.error('ELEVENLABS TTS ERROR:', error.message);
+    audioPlayingStatus.set(sessionId, false);
+    console.log('❌ TTS Error - Cleared audio playing flag');
+  }
+}
 async function convertToSpeech(sessionId, text, t0) {
   try {
     // Set flag: Audio is now playing
