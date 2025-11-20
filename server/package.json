@@ -12,6 +12,7 @@
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
     "elevenlabs": "^1.59.0",
+    "elevenlabs-js": "^1.2.6",
     "express": "^4.21.2",
     "googleapis": "^164.1.0",
     "groq-sdk": "^0.34.0",

@@ -7,7 +7,7 @@ require('dotenv').config();
 const { createClient } = require('@deepgram/sdk');
 const Groq = require('groq-sdk');
 const { google } = require('googleapis');
-const { ElevenLabsClient } = require("elevenlabs"); // ← ADD THIS LINE
+
 const app = express();
 
 const pusher = new Pusher({
@@ -17,9 +17,7 @@ const pusher = new Pusher({
   cluster: process.env.PUSHER_CLUSTER,
   useTLS: true
 });
-const elevenlabs = new ElevenLabsClient({ // ← ADD THESE LINES
-  apiKey: process.env.ELEVENLABS_API_KEY
-});
+
 console.log('🔧 Pusher initialized');
 
 // CORS updated
@@ -36,7 +34,7 @@ const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const DEEPGRAM_API_KEY = process.env.DEEPGRAM_API_KEY;
 const RECALL_API_KEY = process.env.RECALL_API_KEY || "15e68e37c50c76af96d19788f7a9408d0ec908b1";
 const PUBLIC_URL = process.env.PUBLIC_URL || 'https://zoom-bot-pgyj.onrender.com';
-
+const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY;
 // Google Calendar Setup
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
@@ -46,7 +44,7 @@ const GOOGLE_REFRESH_TOKEN = process.env.GOOGLE_REFRESH_TOKEN;
 console.log('🔑 Groq API Key present:', !!GROQ_API_KEY);
 console.log('🔑 Deepgram API Key present:', !!DEEPGRAM_API_KEY);
 console.log('🔑 Google OAuth present:', !!GOOGLE_CLIENT_ID && !!GOOGLE_REFRESH_TOKEN);
-
+console.log('🔑 ElevenLabs API Key present:', !!ELEVENLABS_API_KEY);
 const groq = new Groq({
   apiKey: GROQ_API_KEY
 });
@@ -469,33 +467,48 @@ IMPORTANT:
 // }
 async function convertToSpeechElevenLabs(sessionId, text, t0) {
   try {
+    if (!ELEVENLABS_API_KEY) {
+      throw new Error('ElevenLabs API key not configured');
+    }
+    
     audioPlayingStatus.set(sessionId, true);
     console.log('🔊 ELEVENLABS - Audio playback started');
     
     const t_tts_start = Date.now();
     console.log(`[${t_tts_start - t0}ms] TTS START (ElevenLabs)`);
     
-    // Generate speech using ElevenLabs
-    const audio = await elevenlabs.textToSpeech.convert({
-      voice_id: "pNInz6obpgDQGcFmaJgB", // Adam - natural male voice
-      text: text,
-      model_id: "eleven_flash_v2_5", // Fast model (75ms latency)
-      voice_settings: {
-        stability: 0.5,
-        similarity_boost: 0.75,
-        style: 0,
-        use_speaker_boost: false
-      },
-      output_format: "pcm_24000" // Raw PCM audio at 24kHz
-    });
+    const voiceId = "pNInz6obpgDQGcFmaJgB"; // Adam voice
     
-    // Convert stream to buffer
-    const audioChunks = [];
-    for await (const chunk of audio) {
-      audioChunks.push(chunk);
+    // Call ElevenLabs API directly using fetch
+    const response = await fetch(
+      `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
+      {
+        method: 'POST',
+        headers: {
+          'Accept': 'audio/mpeg',
+          'Content-Type': 'application/json',
+          'xi-api-key': ELEVENLABS_API_KEY
+        },
+        body: JSON.stringify({
+          text: text,
+          model_id: 'eleven_flash_v2_5',
+          voice_settings: {
+            stability: 0.5,
+            similarity_boost: 0.75,
+            style: 0,
+            use_speaker_boost: false
+          }
+        })
+      }
+    );
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`ElevenLabs API error: ${response.status} - ${errorText}`);
     }
     
-    const audioBuffer = Buffer.concat(audioChunks);
+    const arrayBuffer = await response.arrayBuffer();
+    const audioBuffer = Buffer.from(arrayBuffer);
     const base64Audio = audioBuffer.toString('base64');
     
     const t_tts_end = Date.now();
@@ -516,7 +529,7 @@ async function convertToSpeechElevenLabs(sessionId, text, t0) {
     if (!audioResponses.has(sessionId)) {
       audioResponses.set(sessionId, []);
     }
-    audioResponses.get(sessionId).push({ audio: base64Audio, t0: t0 });
+    audioResponses.get(sessionId).push({ audio: base64Audio, t0: t0, format: 'mp3' });
     
     console.log('⏳ Waiting for frontend to finish playing audio...');
     
