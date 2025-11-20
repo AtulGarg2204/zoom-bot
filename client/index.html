@@ -221,36 +221,71 @@ if (eventId) {
             
             return float32Array;
         }
-async function playAudioImmediate(base64Audio, t0) {
+async function playAudioImmediate(base64Audio, t0, format = 'pcm') {
     try {
         if (audioCtx.state === 'suspended') {
             await audioCtx.resume();
         }
         
-        const float32Array = base64ToAudioBuffer(base64Audio);
-        const audioBuffer = audioCtx.createBuffer(1, float32Array.length, 24000);
-        audioBuffer.getChannelData(0).set(float32Array);
-        
-        const source = audioCtx.createBufferSource();
-        source.buffer = audioBuffer;
-        source.connect(audioCtx.destination);
-        
-        // Notify backend when audio finishes playing
-        source.onended = async () => {
-            console.log('🔇 Audio playback finished - notifying backend');
-            try {
-                await fetch(`${SERVER_URL}/api/audio-finished`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ sessionId })
-                });
-                console.log('✅ Backend notified that audio finished');
-            } catch (error) {
-                console.error('❌ Failed to notify backend:', error);
+        if (format === 'mp3') {
+            // Decode MP3 audio
+            const binaryString = atob(base64Audio);
+            const len = binaryString.length;
+            const bytes = new Uint8Array(len);
+            
+            for (let i = 0; i < len; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
             }
-        };
-        
-        source.start(0);
+            
+            const audioBuffer = await audioCtx.decodeAudioData(bytes.buffer);
+            
+            const source = audioCtx.createBufferSource();
+            source.buffer = audioBuffer;
+            source.connect(audioCtx.destination);
+            
+            // Notify backend when audio finishes
+            source.onended = async () => {
+                console.log('🔇 Audio playback finished - notifying backend');
+                try {
+                    await fetch(`${SERVER_URL}/api/audio-finished`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ sessionId })
+                    });
+                    console.log('✅ Backend notified that audio finished');
+                } catch (error) {
+                    console.error('❌ Failed to notify backend:', error);
+                }
+            };
+            
+            source.start(0);
+            
+        } else {
+            // Original PCM handling (for Deepgram)
+            const float32Array = base64ToAudioBuffer(base64Audio);
+            const audioBuffer = audioCtx.createBuffer(1, float32Array.length, 24000);
+            audioBuffer.getChannelData(0).set(float32Array);
+            
+            const source = audioCtx.createBufferSource();
+            source.buffer = audioBuffer;
+            source.connect(audioCtx.destination);
+            
+            source.onended = async () => {
+                console.log('🔇 Audio playback finished - notifying backend');
+                try {
+                    await fetch(`${SERVER_URL}/api/audio-finished`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ sessionId })
+                    });
+                    console.log('✅ Backend notified that audio finished');
+                } catch (error) {
+                    console.error('❌ Failed to notify backend:', error);
+                }
+            };
+            
+            source.start(0);
+        }
         
         const t_play = Date.now();
         const y = t_play - t0;
@@ -331,21 +366,21 @@ channel.bind('audio-received', (data) => {
                 updateStatus('connected', 'Ready');
                 statusInfo.textContent = 'Speak now';
                 
-                // Poll for audio
-                setInterval(async () => {
-                    try {
-                        const audioResponse = await fetch(`${SERVER_URL}/api/get-audio/${sessionId}`);
-                        const data = await audioResponse.json();
-                        
-                        if (data.audio && data.audio.length > 0 && data.t0) {
-                            for (const chunk of data.audio) {
-                                await playAudioImmediate(chunk, data.t0);
-                            }
-                        }
-                    } catch (error) {
-                        // Silent
-                    }
-                }, 100);
+               setInterval(async () => {
+    try {
+        const audioResponse = await fetch(`${SERVER_URL}/api/get-audio/${sessionId}`);
+        const data = await audioResponse.json();
+        
+        if (data.audio && data.audio.length > 0 && data.t0) {
+            for (const chunk of data.audio) {
+                const format = chunk.format || 'pcm'; // Get format from backend
+                await playAudioImmediate(chunk.audio || chunk, data.t0, format);
+            }
+        }
+    } catch (error) {
+        // Silent
+    }
+}, 100);
                 
                 // Get microphone
                 const stream = await navigator.mediaDevices.getUserMedia({ 

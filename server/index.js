@@ -479,13 +479,12 @@ async function convertToSpeechElevenLabs(sessionId, text, t0) {
     
     const voiceId = "pNInz6obpgDQGcFmaJgB"; // Adam voice
     
-    // Call ElevenLabs API directly using fetch
+    // Exact same request as Postman
     const response = await fetch(
       `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
       {
         method: 'POST',
         headers: {
-          'Accept': 'audio/mpeg',
           'Content-Type': 'application/json',
           'xi-api-key': ELEVENLABS_API_KEY
         },
@@ -512,7 +511,7 @@ async function convertToSpeechElevenLabs(sessionId, text, t0) {
     const base64Audio = audioBuffer.toString('base64');
     
     const t_tts_end = Date.now();
-    console.log(`[${t_tts_end - t0}ms] TTS END (ElevenLabs)`);
+    console.log(`[${t_tts_end - t0}ms] TTS END (ElevenLabs) - Received ${audioBuffer.length} bytes`);
     
     const channel = `session-${sessionId}`;
     
@@ -529,14 +528,22 @@ async function convertToSpeechElevenLabs(sessionId, text, t0) {
     if (!audioResponses.has(sessionId)) {
       audioResponses.set(sessionId, []);
     }
-    audioResponses.get(sessionId).push({ audio: base64Audio, t0: t0, format: 'mp3' });
+    audioResponses.get(sessionId).push({ 
+      audio: base64Audio, 
+      t0: t0,
+      format: 'mp3' 
+    });
     
     console.log('⏳ Waiting for frontend to finish playing audio...');
     
   } catch (error) {
     console.error('ELEVENLABS TTS ERROR:', error.message);
+    console.error('Full error:', error);
     audioPlayingStatus.set(sessionId, false);
     console.log('❌ TTS Error - Cleared audio playing flag');
+    
+    // Re-throw so we can handle fallback
+    throw error;
   }
 }
 async function convertToSpeech(sessionId, text, t0) {
@@ -2196,15 +2203,19 @@ app.post('/api/audio-finished', (req, res) => {
 });
 app.get('/api/get-audio/:sessionId', (req, res) => {
   const { sessionId } = req.params;
+  
   const audioData = audioResponses.get(sessionId) || [];
   
   if (audioData.length > 0) {
-    const data = [...audioData];
-    audioResponses.set(sessionId, []);
-    res.json({ 
-      audio: data.map(d => d.audio),
-      t0: data[0].t0
-    });
+    const response = {
+      audio: audioData.map(item => ({
+        audio: item.audio,
+        format: item.format || 'pcm'
+      })),
+      t0: audioData[0].t0
+    };
+    audioResponses.delete(sessionId);
+    res.json(response);
   } else {
     res.json({ audio: [] });
   }
