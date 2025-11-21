@@ -144,8 +144,8 @@
     <script>
         const params = new URLSearchParams(window.location.search);
         // const SERVER_URL = params.get('server') || 'https://zoom-bot-zkf2.vercel.app';
-        const SERVER_URL = params.get('server') || 'https://zoom-bot-pgyj.onrender.com';
-        // const SERVER_URL = params.get('server') || 'http://localhost:3000';
+        // const SERVER_URL = params.get('server') || 'https://zoom-bot-pgyj.onrender.com';
+        const SERVER_URL = params.get('server') || 'http://localhost:3000';
         const PUSHER_KEY = params.get('pusher_key') || '53efc497795d6002deb2';
         const PUSHER_CLUSTER = params.get('pusher_cluster') || 'ap2';
         
@@ -222,32 +222,41 @@ if (eventId) {
             return float32Array;
         }
 
-        async function playAudioImmediate(base64Audio, t0) {
-            try {
-                if (audioCtx.state === 'suspended') {
-                    await audioCtx.resume();
-                }
-                
-                const float32Array = base64ToAudioBuffer(base64Audio);
-                const audioBuffer = audioCtx.createBuffer(1, float32Array.length, 24000);
-                audioBuffer.getChannelData(0).set(float32Array);
-                
-                const source = audioCtx.createBufferSource();
-                source.buffer = audioBuffer;
-                source.connect(audioCtx.destination);
-                source.start(0);
-                
-                const t_play = Date.now();
-                const y = t_play - t0;
-                
-                console.log(`[${y}ms] ⚡ BROWSER STARTS PLAYING (T=Y)`);
-                console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
-                
-            } catch (error) {
-                console.error('PLAYBACK ERROR:', error);
-            }
+       async function playAudioImmediate(base64Audio, t0) {
+    try {
+        if (audioCtx.state === 'suspended') {
+            await audioCtx.resume();
         }
-
+        
+        // Decode MP3 from Rime AI
+        const binaryString = atob(base64Audio);
+        const len = binaryString.length;
+        const bytes = new Uint8Array(len);
+        
+        for (let i = 0; i < len; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+        }
+        
+        // Decode MP3 to audio buffer
+        const audioBuffer = await audioCtx.decodeAudioData(bytes.buffer);
+        
+        const source = audioCtx.createBufferSource();
+        source.buffer = audioBuffer;
+        source.connect(audioCtx.destination);
+        source.start(0);
+        
+        const t_play = Date.now();
+        const y = t_play - t0;
+        
+        console.log(`[${y}ms] ⚡ BROWSER STARTS PLAYING RIME AUDIO (MP3)`);
+        console.log(`   Audio duration: ${audioBuffer.duration.toFixed(2)}s`);
+        console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
+        
+    } catch (error) {
+        console.error('PLAYBACK ERROR:', error);
+        console.error('Error details:', error.message);
+    }
+}
         async function connectToServer() {
             try {
                 updateStatus('connecting', 'Connecting...');

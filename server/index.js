@@ -34,7 +34,7 @@ const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const DEEPGRAM_API_KEY = process.env.DEEPGRAM_API_KEY;
 const RECALL_API_KEY = process.env.RECALL_API_KEY || "15e68e37c50c76af96d19788f7a9408d0ec908b1";
 const PUBLIC_URL = process.env.PUBLIC_URL || 'https://zoom-bot-pgyj.onrender.com';
-
+const RIME_API_KEY = process.env.RIME_API_KEY;
 // Google Calendar Setup
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
@@ -510,6 +510,89 @@ async function convertToSpeech(sessionId, text, t0) {
     
   } catch (error) {
     console.error('TTS ERROR:', error.message);
+  }
+}async function convertToSpeech(sessionId, text, t0) {
+  try {
+    if (!RIME_API_KEY) {
+      throw new Error('Rime API key not configured');
+    }
+
+    const t_tts_start = Date.now();
+    console.log(`[${t_tts_start - t0}ms] TTS START (Rime AI)`);
+    console.log('   Using Rime AI TTS');
+    console.log('   Model: mist');
+    console.log('   Speaker: orion');
+    console.log('   Text:', text);
+    
+    const response = await fetch('https://users.rime.ai/v1/rime-tts', {
+      method: 'POST',
+      headers: {
+        'Accept': 'audio/mp3',
+        'Authorization': `Bearer ${RIME_API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        speaker: 'orion',
+        text: text,
+        modelId: 'arcana',
+        samplingRate: 24000
+      })
+    });
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Rime API error: ${response.status} - ${errorText}`);
+    }
+    
+    const t_first_byte = Date.now();
+    console.log(`[${t_first_byte - t0}ms] ⚡ First byte received from Rime`);
+    console.log(`   Time to first byte: ${t_first_byte - t_tts_start}ms`);
+    
+    // Get audio as array buffer
+    const arrayBuffer = await response.arrayBuffer();
+    
+    const t_download_complete = Date.now();
+    console.log(`[${t_download_complete - t0}ms] 📥 Audio download complete`);
+    console.log(`   Download time: ${t_download_complete - t_first_byte}ms`);
+    console.log(`   Audio size: ${arrayBuffer.byteLength} bytes`);
+    
+    // Convert MP3 to base64
+    const audioBuffer = Buffer.from(arrayBuffer);
+    const base64Audio = audioBuffer.toString('base64');
+    
+    const t_tts_end = Date.now();
+    console.log(`[${t_tts_end - t0}ms] TTS END (Rime AI)`);
+    console.log(`   Total TTS time: ${t_tts_end - t_tts_start}ms`);
+    console.log(`   Breakdown:`);
+    console.log(`     - Time to first byte: ${t_first_byte - t_tts_start}ms`);
+    console.log(`     - Download time: ${t_download_complete - t_first_byte}ms`);
+    console.log(`     - Processing: ${t_tts_end - t_download_complete}ms`);
+    
+    // Send notification that audio was received
+    const channel = `session-${sessionId}`;
+    
+    try {
+      await pusher.trigger(channel, 'audio-received', {
+        message: 'Received audio from Rime AI',
+        timestamp: Date.now()
+      });
+      console.log(`✅ Audio-received notification sent`);
+    } catch (err) {
+      console.error('❌ Pusher error:', err);
+    }
+    
+    if (!audioResponses.has(sessionId)) {
+      audioResponses.set(sessionId, []);
+    }
+    
+    // Store base64 audio for frontend to fetch
+    audioResponses.get(sessionId).push({ audio: base64Audio, t0: t0 });
+    
+    console.log('✅ Audio stored in audioResponses map');
+    
+  } catch (error) {
+    console.error('❌ RIME AI TTS ERROR:', error.message);
+    console.error('   Full error:', error);
   }
 }
 
