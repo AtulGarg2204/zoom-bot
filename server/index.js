@@ -571,7 +571,7 @@ async function convertToSpeechRime(sessionId, text, t0) {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        speaker: 'orion',
+        speaker: 'ursa',
         text: text,
         modelId: 'arcana',
         samplingRate: 24000,
