@@ -34,10 +34,6 @@ const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const DEEPGRAM_API_KEY = process.env.DEEPGRAM_API_KEY;
 const RECALL_API_KEY = process.env.RECALL_API_KEY || "15e68e37c50c76af96d19788f7a9408d0ec908b1";
 const PUBLIC_URL = process.env.PUBLIC_URL || 'https://zoom-bot-pgyj.onrender.com';
-const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY;
-const RIME_API_KEY = process.env.RIME_API_KEY;
-
-
 
 // Google Calendar Setup
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
@@ -48,8 +44,7 @@ const GOOGLE_REFRESH_TOKEN = process.env.GOOGLE_REFRESH_TOKEN;
 console.log('🔑 Groq API Key present:', !!GROQ_API_KEY);
 console.log('🔑 Deepgram API Key present:', !!DEEPGRAM_API_KEY);
 console.log('🔑 Google OAuth present:', !!GOOGLE_CLIENT_ID && !!GOOGLE_REFRESH_TOKEN);
-console.log('🔑 ElevenLabs API Key present:', !!ELEVENLABS_API_KEY);
-console.log('🔑 Rime API Key present:', !!RIME_API_KEY); 
+
 const groq = new Groq({
   apiKey: GROQ_API_KEY
 });
@@ -74,9 +69,7 @@ console.log('📅 Google Calendar client initialized');
 const deepgramConnections = new Map();
 const audioResponses = new Map();
 const conversationHistory = new Map();
-const processedEvents = new Map();
-const incompleteTranscripts = new Map();
-const audioPlayingStatus = new Map();
+const processedEvents = new Map(); // NEW: Track processed events
 
 // Store active calendar channel info
 let calendarChannelId = null;
@@ -95,196 +88,15 @@ function addToHistory(sessionId, speaker, message) {
     content: message,
     timestamp: new Date().toISOString()
   });
-
+  
+  // Keep last 12 messages for context
+  if (history.length > 12) {
+    history.splice(0, 2);
+  }
   
   conversationHistory.set(sessionId, history);
 }
 
-async function processWithLLMContextAware(sessionId, t0) {
-  try {
-    if (!conversationHistory.has(sessionId)) {
-      conversationHistory.set(sessionId, []);
-    }
-    
-    const history = conversationHistory.get(sessionId);
-    
-    // Build conversation context with speaker labels
-    const conversationContext = history.map(msg => {
-      return `${msg.speaker}: ${msg.content}`;
-    }).join('\n');
-    
-    const t_llm_start = Date.now();
-    
-    console.log('\n' + '🤖'.repeat(40));
-    console.log('🤖 LLM CONTEXT-AWARE PROCESSING (GROQ + LLAMA)');
-    console.log('🤖'.repeat(40));
-    console.log(`\n⏱️  [${t_llm_start - t0}ms] Groq LLM Request Starting...`);
-    console.log('🦙 Model: Llama 4 Maverick 17B');
-    
-    console.log('\n📜 CONVERSATION CONTEXT SENT TO LLM:');
-    console.log('┌' + '─'.repeat(78) + '┐');
-    if (conversationContext.length > 0) {
-      conversationContext.split('\n').forEach(line => {
-        console.log('│ ' + line.padEnd(77) + '│');
-      });
-    } else {
-      console.log('│ ' + '(No conversation history yet)'.padEnd(77) + '│');
-    }
-    console.log('└' + '─'.repeat(78) + '┘');
-    
-    console.log('\n📊 CONTEXT STATS:');
-    console.log(`   Total messages in context: ${history.length}`);
-    console.log(`   Context length: ${conversationContext.length} characters`);
-    
-   const response = await groq.chat.completions.create({
-  model: 'meta-llama/llama-4-maverick-17b-128e-instruct',
-  messages: [
-    {
-      role: 'system',
-      content: `You are James, a friendly and helpful AI Assistant in a natural conversation. Speakers are labeled as Speaker 0, Speaker 1, etc.
-
-YOUR IDENTITY:
-- Your name is James
-- When someone asks your name, say "I'm James"
-- You can be called James, bot, or assistant
-
-YOUR PERSONALITY:
-- Warm, approachable, and conversational
-- Natural and human-like (not robotic)
-- Helpful but not overly formal
-- Can show personality and emotion when appropriate
-
-RESPONSE STYLE:
-- Use natural conversation fillers: "Oh", "Well", "You know", "Actually", "Hmm"
-- Add warmth: "Great question!", "I'd be happy to help", "That's interesting!"
-- Vary your responses (don't always start the same way)
-- Keep responses conversational (10-20 words for natural flow)
-- Use contractions: "I'm" not "I am", "That's" not "That is"
-
-WHEN TO RESPOND:
-1. Someone says "James" , "bot", "assistant", or "AI" → Respond naturally
-2. Someone asks you a direct question → Respond warmly
-3. Follow-up after you just spoke → Continue conversation
-4. People talking to each other → Say only "SILENT"
-5. Unclear who is being addressed → Say only "SILENT"
-
-EXAMPLES OF NATURAL RESPONSES:
-
-Question: "Hey bot, what's 2+2?"
-❌ Bad: "Four."
-✅ Good: "Oh, that's four!"
-✅ Good: "It's four."
-✅ Good: "That'd be four."
-
-Question: "How are you?"
-❌ Bad: "I'm well, thanks."
-✅ Good: "I'm doing great, thanks for asking! How about you?"
-✅ Good: "Pretty good! Thanks for asking."
-✅ Good: "I'm wonderful, thank you!"
-
-Question: "What do you know about cricket?"
-❌ Bad: "It's a bat-and-ball sport."
-✅ Good: "Oh, cricket! It's a bat-and-ball sport played between two teams."
-✅ Good: "Well, cricket is a really popular sport, especially in countries like India and England."
-✅ Good: "Cricket's a fascinating game with two teams competing in innings."
-
-Question: "What's your name?"
-❌ Bad: "I'm an AI Assistant."
-✅ Good: "I'm an AI assistant here to help! You can just call me 'bot' or 'assistant'."
-✅ Good: "You can call me your AI assistant! I'm here to help with anything you need."
-
-Question: "Can you help me?"
-❌ Bad: "Yes."
-✅ Good: "Of course! I'd be happy to help. What do you need?"
-✅ Good: "Absolutely! What can I do for you?"
-✅ Good: "Sure thing! How can I assist?"
-
-IMPORTANT:
-- Be natural, not robotic
-- Show personality while staying helpful
-- Keep it conversational but concise (10-20 words)
-- Never say "Yes, I should respond" or explain your reasoning
-- If conversation is between others, just say "SILENT"`
-    },
-        {
-          role: 'user',
-          content: `Conversation:\n${conversationContext}\n\nIf conversation is between others, say "SILENT". If you should respond, give ONLY your answer.`
-        }
-      ],
-      max_completion_tokens: 300,
-      temperature: 0.5,
-      top_p: 1
-    });
-    
-    const llmResponse = response.choices[0].message.content.trim();
-    
-    const t_llm_end = Date.now();
-    console.log(`\n⏱️  [${t_llm_end - t0}ms] Groq Response Received`);
-    console.log(`⏱️  Groq took: ${t_llm_end - t_llm_start}ms ⚡`);
-    console.log(`📊 Tokens used: ${response.usage.total_tokens}`);
-    console.log(`📊 Prompt tokens: ${response.usage.prompt_tokens}`);
-    console.log(`📊 Completion tokens: ${response.usage.completion_tokens}`);
-    
-    console.log('\n💭 LLM DECISION:');
-    console.log('┌' + '─'.repeat(78) + '┐');
-    console.log('│ ' + llmResponse.padEnd(77) + '│');
-    console.log('└' + '─'.repeat(78) + '┘');
-    
-    // Check if LLM decided to respond or stay silent
-    const isSilent = llmResponse.toUpperCase() === 'SILENT' || 
-                     llmResponse.toUpperCase().startsWith('SILENT');
-    
-    if (isSilent) {
-      console.log('\n🤫 DECISION: STAY SILENT');
-      console.log('   Reason: Conversation between other participants');
-      console.log('   Action: No speech generation');
-      
-      const channel = `session-${sessionId}`;
-      pusher.trigger(channel, 'bot-silent', {
-        message: 'Bot is listening but not responding'
-      }).catch(err => console.error('Pusher error:', err));
-      
-      console.log('   ✅ Sent "bot-silent" event to frontend');
-      console.log('\n' + '='.repeat(80) + '\n');
-      
-      return;
-    }
-    
-    // LLM decided to respond
-    console.log('\n✅ DECISION: RESPOND');
-    console.log(`   Response: "${llmResponse}"`);
-    console.log('   Action: Generate speech and send to user');
-    
-    const channel = `session-${sessionId}`;
-    
-    await pusher.trigger(channel, 'ai-response', {
-      text: llmResponse
-    });
-    console.log('   ✅ Sent AI response to frontend via Pusher');
-    
-    console.log('\n📚 UPDATING CONVERSATION HISTORY:');
-    console.log(`   Before: ${history.length} messages`);
-    
-    // Add bot's response to history
-    addToHistory(sessionId, 'AI Assistant', llmResponse);
-    
-    console.log(`   After: ${conversationHistory.get(sessionId).length} messages`);
-    console.log(`   Added: AI Assistant: "${llmResponse}"`);
-    
-    console.log('\n🔊 STARTING TEXT-TO-SPEECH CONVERSION...');
-    console.log('-'.repeat(80));
-    
-    // Convert to speech
-  convertToSpeechRime(sessionId, llmResponse, t0);
-    
-    console.log('\n' + '='.repeat(80) + '\n');
-    
-  } catch (error) {
-    console.error('\n❌ LLM ERROR:', error.message);
-    console.error('Full error:', error);
-    console.log('\n' + '='.repeat(80) + '\n');
-  }
-}
 // async function processWithLLMContextAware(sessionId, t0) {
 //   try {
 //     if (!conversationHistory.has(sessionId)) {
@@ -301,10 +113,10 @@ IMPORTANT:
 //     const t_llm_start = Date.now();
     
 //     console.log('\n' + '🤖'.repeat(40));
-//     console.log('🤖 LLM CONTEXT-AWARE PROCESSING (GROQ + GPT-OSS-20B)');
+//     console.log('🤖 LLM CONTEXT-AWARE PROCESSING (GROQ + LLAMA)');
 //     console.log('🤖'.repeat(40));
 //     console.log(`\n⏱️  [${t_llm_start - t0}ms] Groq LLM Request Starting...`);
-//     console.log('🧠 Model: GPT-OSS-20B');
+//     console.log('🦙 Model: Llama 4 Maverick 17B');
     
 //     console.log('\n📜 CONVERSATION CONTEXT SENT TO LLM:');
 //     console.log('┌' + '─'.repeat(78) + '┐');
@@ -321,15 +133,14 @@ IMPORTANT:
 //     console.log(`   Total messages in context: ${history.length}`);
 //     console.log(`   Context length: ${conversationContext.length} characters`);
     
-//     const response = await groq.chat.completions.create({
-//       model: 'openai/gpt-oss-20b',
-//       messages: [
-//         {
-//           role: 'system',
-//           content: `You are James, a friendly and helpful AI Assistant in a natural conversation. Speakers are labeled as Speaker 0, Speaker 1, etc.
+//    const response = await groq.chat.completions.create({
+//   model: 'meta-llama/llama-4-maverick-17b-128e-instruct',
+//   messages: [
+//     {
+//       role: 'system',
+//       content: `You are a friendly and helpful AI Assistant in a natural conversation. Speakers are labeled as Speaker 0, Speaker 1, etc.
 
 // YOUR PERSONALITY:
-// - Your name is James
 // - Warm, approachable, and conversational
 // - Natural and human-like (not robotic)
 // - Helpful but not overly formal
@@ -339,11 +150,11 @@ IMPORTANT:
 // - Use natural conversation fillers: "Oh", "Well", "You know", "Actually", "Hmm"
 // - Add warmth: "Great question!", "I'd be happy to help", "That's interesting!"
 // - Vary your responses (don't always start the same way)
-// - Keep responses under 20 words for natural flow
+// - Keep responses conversational (10-20 words for natural flow)
 // - Use contractions: "I'm" not "I am", "That's" not "That is"
 
 // WHEN TO RESPOND:
-// 1. Someone says "James", "bot", "assistant", or "AI" → Respond naturally
+// 1. Someone says "bot", "assistant", or "AI" → Respond naturally
 // 2. Someone asks you a direct question → Respond warmly
 // 3. Follow-up after you just spoke → Continue conversation
 // 4. People talking to each other → Say only "SILENT"
@@ -351,54 +162,50 @@ IMPORTANT:
 
 // EXAMPLES OF NATURAL RESPONSES:
 
-// Question: "Hey James, what's 2+2?"
-// ❌ Too robotic: "Four."
+// Question: "Hey bot, what's 2+2?"
+// ❌ Bad: "Four."
 // ✅ Good: "Oh, that's four!"
-// ✅ Good: "That's four! Easy one!"
+// ✅ Good: "It's four."
+// ✅ Good: "That'd be four."
 
 // Question: "How are you?"
-// ❌ Too short: "Good."
+// ❌ Bad: "I'm well, thanks."
 // ✅ Good: "I'm doing great, thanks for asking! How about you?"
 // ✅ Good: "Pretty good! Thanks for asking."
+// ✅ Good: "I'm wonderful, thank you!"
 
 // Question: "What do you know about cricket?"
-// ❌ Too long: "Cricket is a bat-and-ball sport that originated in England and is now played internationally with two teams of eleven players..."
-// ✅ Good: "Cricket's a bat-and-ball sport, super popular in India and England!"
-// ✅ Good: "It's a team sport with batting and bowling, really big in South Asia!"
+// ❌ Bad: "It's a bat-and-ball sport."
+// ✅ Good: "Oh, cricket! It's a bat-and-ball sport played between two teams."
+// ✅ Good: "Well, cricket is a really popular sport, especially in countries like India and England."
+// ✅ Good: "Cricket's a fascinating game with two teams competing in innings."
 
 // Question: "What's your name?"
-// ❌ Too formal: "I am an AI Assistant."
-// ✅ Good: "I'm James, your AI assistant! Nice to meet you."
-// ✅ Good: "My name's James! I'm here to help."
+// ❌ Bad: "I'm an AI Assistant."
+// ✅ Good: "I'm an AI assistant here to help! You can just call me 'bot' or 'assistant'."
+// ✅ Good: "You can call me your AI assistant! I'm here to help with anything you need."
 
 // Question: "Can you help me?"
-// ❌ Too short: "Yes."
+// ❌ Bad: "Yes."
 // ✅ Good: "Of course! I'd be happy to help. What do you need?"
 // ✅ Good: "Absolutely! What can I do for you?"
-
-// Question: "Tell me about yourself"
-// ❌ Too long: "I'm an artificial intelligence assistant created to help people with various tasks and questions throughout their day..."
-// ✅ Good: "I'm James, an AI assistant here to help with whatever you need!"
-// ✅ Good: "I'm James! I'm here to answer questions and help out however I can."
+// ✅ Good: "Sure thing! How can I assist?"
 
 // IMPORTANT:
-// - Be natural and friendly, not robotic
+// - Be natural, not robotic
 // - Show personality while staying helpful
-// - Keep it conversational but under 20 words
+// - Keep it conversational but concise (10-20 words)
 // - Never say "Yes, I should respond" or explain your reasoning
-// - If conversation is between others, just say "SILENT"
-// - Introduce yourself as James when asked your name`
-//         },
+// - If conversation is between others, just say "SILENT"`
+//     },
 //         {
 //           role: 'user',
-//           content: `Conversation:\n${conversationContext}\n\nIf conversation is between others, say "SILENT". If you should respond, give ONLY your answer (under 20 words).`
+//           content: `Conversation:\n${conversationContext}\n\nIf conversation is between others, say "SILENT". If you should respond, give ONLY your answer.`
 //         }
 //       ],
-//       max_completion_tokens: 100,  // ← Increased to 100 (allows ~20 words comfortably)
+//       max_completion_tokens: 300,
 //       temperature: 0.5,
-//       top_p: 0.8,
-//       stream: false,
-//       reasoning_effort: 'low'
+//       top_p: 1
 //     });
     
 //     const llmResponse = response.choices[0].message.content.trim();
@@ -406,9 +213,9 @@ IMPORTANT:
 //     const t_llm_end = Date.now();
 //     console.log(`\n⏱️  [${t_llm_end - t0}ms] Groq Response Received`);
 //     console.log(`⏱️  Groq took: ${t_llm_end - t_llm_start}ms ⚡`);
-//     console.log(`📊 Tokens used: ${response.usage?.total_tokens || 'N/A'}`);
-//     console.log(`📊 Prompt tokens: ${response.usage?.prompt_tokens || 'N/A'}`);
-//     console.log(`📊 Completion tokens: ${response.usage?.completion_tokens || 'N/A'}`);
+//     console.log(`📊 Tokens used: ${response.usage.total_tokens}`);
+//     console.log(`📊 Prompt tokens: ${response.usage.prompt_tokens}`);
+//     console.log(`📊 Completion tokens: ${response.usage.completion_tokens}`);
     
 //     console.log('\n💭 LLM DECISION:');
 //     console.log('┌' + '─'.repeat(78) + '┐');
@@ -470,165 +277,193 @@ IMPORTANT:
 //     console.log('\n' + '='.repeat(80) + '\n');
 //   }
 // }
-async function convertToSpeechElevenLabs(sessionId, text, t0) {
+async function processWithLLMContextAware(sessionId, t0) {
   try {
-    if (!ELEVENLABS_API_KEY) {
-      throw new Error('ElevenLabs API key not configured');
+    if (!conversationHistory.has(sessionId)) {
+      conversationHistory.set(sessionId, []);
     }
     
-    audioPlayingStatus.set(sessionId, true);
-    console.log('🔊 ELEVENLABS - Audio playback started');
+    const history = conversationHistory.get(sessionId);
     
-    const t_tts_start = Date.now();
-    console.log(`[${t_tts_start - t0}ms] TTS START (ElevenLabs)`);
+    // Build conversation context with speaker labels
+    const conversationContext = history.map(msg => {
+      return `${msg.speaker}: ${msg.content}`;
+    }).join('\n');
     
-    const voiceId = "pNInz6obpgDQGcFmaJgB"; // Adam voice
+    const t_llm_start = Date.now();
     
-    // Exact same request as Postman
-    const response = await fetch(
-      `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'xi-api-key': ELEVENLABS_API_KEY
+    console.log('\n' + '🤖'.repeat(40));
+    console.log('🤖 LLM CONTEXT-AWARE PROCESSING (GROQ + GPT-OSS-20B)');
+    console.log('🤖'.repeat(40));
+    console.log(`\n⏱️  [${t_llm_start - t0}ms] Groq LLM Request Starting...`);
+    console.log('🧠 Model: GPT-OSS-20B');
+    
+    console.log('\n📜 CONVERSATION CONTEXT SENT TO LLM:');
+    console.log('┌' + '─'.repeat(78) + '┐');
+    if (conversationContext.length > 0) {
+      conversationContext.split('\n').forEach(line => {
+        console.log('│ ' + line.padEnd(77) + '│');
+      });
+    } else {
+      console.log('│ ' + '(No conversation history yet)'.padEnd(77) + '│');
+    }
+    console.log('└' + '─'.repeat(78) + '┘');
+    
+    console.log('\n📊 CONTEXT STATS:');
+    console.log(`   Total messages in context: ${history.length}`);
+    console.log(`   Context length: ${conversationContext.length} characters`);
+    
+    const response = await groq.chat.completions.create({
+      model: 'openai/gpt-oss-20b',
+      messages: [
+        {
+          role: 'system',
+          content: `You are James, a friendly and helpful AI Assistant in a natural conversation. Speakers are labeled as Speaker 0, Speaker 1, etc.
+
+YOUR PERSONALITY:
+- Your name is James
+- Warm, approachable, and conversational
+- Natural and human-like (not robotic)
+- Helpful but not overly formal
+- Can show personality and emotion when appropriate
+
+RESPONSE STYLE:
+- Use natural conversation fillers: "Oh", "Well", "You know", "Actually", "Hmm"
+- Add warmth: "Great question!", "I'd be happy to help", "That's interesting!"
+- Vary your responses (don't always start the same way)
+- Keep responses under 20 words for natural flow
+- Use contractions: "I'm" not "I am", "That's" not "That is"
+
+WHEN TO RESPOND:
+1. Someone says "James", "bot", "assistant", or "AI" → Respond naturally
+2. Someone asks you a direct question → Respond warmly
+3. Follow-up after you just spoke → Continue conversation
+4. People talking to each other → Say only "SILENT"
+5. Unclear who is being addressed → Say only "SILENT"
+
+EXAMPLES OF NATURAL RESPONSES:
+
+Question: "Hey James, what's 2+2?"
+❌ Too robotic: "Four."
+✅ Good: "Oh, that's four!"
+✅ Good: "That's four! Easy one!"
+
+Question: "How are you?"
+❌ Too short: "Good."
+✅ Good: "I'm doing great, thanks for asking! How about you?"
+✅ Good: "Pretty good! Thanks for asking."
+
+Question: "What do you know about cricket?"
+❌ Too long: "Cricket is a bat-and-ball sport that originated in England and is now played internationally with two teams of eleven players..."
+✅ Good: "Cricket's a bat-and-ball sport, super popular in India and England!"
+✅ Good: "It's a team sport with batting and bowling, really big in South Asia!"
+
+Question: "What's your name?"
+❌ Too formal: "I am an AI Assistant."
+✅ Good: "I'm James, your AI assistant! Nice to meet you."
+✅ Good: "My name's James! I'm here to help."
+
+Question: "Can you help me?"
+❌ Too short: "Yes."
+✅ Good: "Of course! I'd be happy to help. What do you need?"
+✅ Good: "Absolutely! What can I do for you?"
+
+Question: "Tell me about yourself"
+❌ Too long: "I'm an artificial intelligence assistant created to help people with various tasks and questions throughout their day..."
+✅ Good: "I'm James, an AI assistant here to help with whatever you need!"
+✅ Good: "I'm James! I'm here to answer questions and help out however I can."
+
+IMPORTANT:
+- Be natural and friendly, not robotic
+- Show personality while staying helpful
+- Keep it conversational but under 20 words
+- Never say "Yes, I should respond" or explain your reasoning
+- If conversation is between others, just say "SILENT"
+- Introduce yourself as James when asked your name`
         },
-        body: JSON.stringify({
-          text: text,
-          model_id: 'eleven_flash_v2_5',
-          voice_settings: {
-            stability: 0.5,
-            similarity_boost: 0.75,
-            style: 0,
-            use_speaker_boost: false
-          }
-        })
-      }
-    );
+        {
+          role: 'user',
+          content: `Conversation:\n${conversationContext}\n\nIf conversation is between others, say "SILENT". If you should respond, give ONLY your answer (under 20 words).`
+        }
+      ],
+      max_completion_tokens: 100,  // ← Increased to 100 (allows ~20 words comfortably)
+      temperature: 0.5,
+      top_p: 0.8,
+      stream: false,
+      reasoning_effort: 'low'
+    });
     
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`ElevenLabs API error: ${response.status} - ${errorText}`);
+    const llmResponse = response.choices[0].message.content.trim();
+    
+    const t_llm_end = Date.now();
+    console.log(`\n⏱️  [${t_llm_end - t0}ms] Groq Response Received`);
+    console.log(`⏱️  Groq took: ${t_llm_end - t_llm_start}ms ⚡`);
+    console.log(`📊 Tokens used: ${response.usage?.total_tokens || 'N/A'}`);
+    console.log(`📊 Prompt tokens: ${response.usage?.prompt_tokens || 'N/A'}`);
+    console.log(`📊 Completion tokens: ${response.usage?.completion_tokens || 'N/A'}`);
+    
+    console.log('\n💭 LLM DECISION:');
+    console.log('┌' + '─'.repeat(78) + '┐');
+    console.log('│ ' + llmResponse.padEnd(77) + '│');
+    console.log('└' + '─'.repeat(78) + '┘');
+    
+    // Check if LLM decided to respond or stay silent
+    const isSilent = llmResponse.toUpperCase() === 'SILENT' || 
+                     llmResponse.toUpperCase().startsWith('SILENT');
+    
+    if (isSilent) {
+      console.log('\n🤫 DECISION: STAY SILENT');
+      console.log('   Reason: Conversation between other participants');
+      console.log('   Action: No speech generation');
+      
+      const channel = `session-${sessionId}`;
+      pusher.trigger(channel, 'bot-silent', {
+        message: 'Bot is listening but not responding'
+      }).catch(err => console.error('Pusher error:', err));
+      
+      console.log('   ✅ Sent "bot-silent" event to frontend');
+      console.log('\n' + '='.repeat(80) + '\n');
+      
+      return;
     }
     
-    const arrayBuffer = await response.arrayBuffer();
-    const audioBuffer = Buffer.from(arrayBuffer);
-    const base64Audio = audioBuffer.toString('base64');
-    
-    const t_tts_end = Date.now();
-    console.log(`[${t_tts_end - t0}ms] TTS END (ElevenLabs) - Received ${audioBuffer.length} bytes`);
+    // LLM decided to respond
+    console.log('\n✅ DECISION: RESPOND');
+    console.log(`   Response: "${llmResponse}"`);
+    console.log('   Action: Generate speech and send to user');
     
     const channel = `session-${sessionId}`;
     
-    try {
-      await pusher.trigger(channel, 'audio-received', {
-        message: 'Received audio from ElevenLabs',
-        timestamp: Date.now()
-      });
-      console.log(`✅ Audio-received notification sent`);
-    } catch (err) {
-      console.error('❌ Pusher error:', err);
-    }
-    
-    if (!audioResponses.has(sessionId)) {
-      audioResponses.set(sessionId, []);
-    }
-    audioResponses.get(sessionId).push({ 
-      audio: base64Audio, 
-      t0: t0,
-      format: 'mp3' 
+    await pusher.trigger(channel, 'ai-response', {
+      text: llmResponse
     });
+    console.log('   ✅ Sent AI response to frontend via Pusher');
     
-    console.log('⏳ Waiting for frontend to finish playing audio...');
+    console.log('\n📚 UPDATING CONVERSATION HISTORY:');
+    console.log(`   Before: ${history.length} messages`);
+    
+    // Add bot's response to history
+    addToHistory(sessionId, 'AI Assistant', llmResponse);
+    
+    console.log(`   After: ${conversationHistory.get(sessionId).length} messages`);
+    console.log(`   Added: AI Assistant: "${llmResponse}"`);
+    
+    console.log('\n🔊 STARTING TEXT-TO-SPEECH CONVERSION...');
+    console.log('-'.repeat(80));
+    
+    // Convert to speech
+    await convertToSpeech(sessionId, llmResponse, t0);
+    
+    console.log('\n' + '='.repeat(80) + '\n');
     
   } catch (error) {
-    console.error('ELEVENLABS TTS ERROR:', error.message);
+    console.error('\n❌ LLM ERROR:', error.message);
     console.error('Full error:', error);
-    audioPlayingStatus.set(sessionId, false);
-    console.log('❌ TTS Error - Cleared audio playing flag');
-    
-    // Re-throw so we can handle fallback
-    throw error;
-  }
-}
-async function convertToSpeechRime(sessionId, text, t0) {
-  try {
-    if (!RIME_API_KEY) {
-      throw new Error('Rime API key not configured');
-    }
-    
-    audioPlayingStatus.set(sessionId, true);
-    console.log('🔊 RIME AI - Audio playback started');
-    
-    const t_tts_start = Date.now();
-    console.log(`[${t_tts_start - t0}ms] TTS START (Rime AI)`);
-    
-    const response = await fetch('https://users.rime.ai/v1/rime-tts', {
-      method: 'POST',
-      headers: {
-        'Accept': 'audio/mp3',
-        'Authorization': `Bearer ${RIME_API_KEY}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        speaker: 'ursa',
-        text: text,
-        modelId: 'arcana',
-        samplingRate: 24000,
-        temperature: 0.5,
-        top_p: 1,
-        repetition_penalty: 1.5,
-        max_tokens: 1200
-      })
-    });
-    
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Rime API error: ${response.status} - ${errorText}`);
-    }
-    
-    const arrayBuffer = await response.arrayBuffer();
-    const audioBuffer = Buffer.from(arrayBuffer);
-    const base64Audio = audioBuffer.toString('base64');
-    
-    const t_tts_end = Date.now();
-    console.log(`[${t_tts_end - t0}ms] TTS END (Rime AI)`);
-    
-    const channel = `session-${sessionId}`;
-    
-    try {
-      await pusher.trigger(channel, 'audio-received', {
-        message: 'Received audio from Rime AI',
-        timestamp: Date.now()
-      });
-      console.log(`✅ Audio-received notification sent`);
-    } catch (err) {
-      console.error('❌ Pusher error:', err);
-    }
-    
-    if (!audioResponses.has(sessionId)) {
-      audioResponses.set(sessionId, []);
-    }
-    audioResponses.get(sessionId).push({ 
-      audio: base64Audio, 
-      t0: t0,
-      format: 'mp3'
-    });
-    
-    console.log('⏳ Waiting for frontend to finish playing audio...');
-    
-  } catch (error) {
-    console.error('RIME AI TTS ERROR:', error.message);
-    audioPlayingStatus.set(sessionId, false);
-    console.log('❌ TTS Error - Cleared audio playing flag');
+    console.log('\n' + '='.repeat(80) + '\n');
   }
 }
 async function convertToSpeech(sessionId, text, t0) {
   try {
-    // Set flag: Audio is now playing
-    audioPlayingStatus.set(sessionId, true);
-    console.log('🔊 AUDIO PLAYBACK STARTED - Blocking new transcripts');
-    
     const t_tts_start = Date.now();
     console.log(`[${t_tts_start - t0}ms] TTS START`);
     
@@ -673,14 +508,8 @@ async function convertToSpeech(sessionId, text, t0) {
     }
     audioResponses.get(sessionId).push({ audio: base64Audio, t0: t0 });
     
-    console.log('⏳ Waiting for frontend to finish playing audio...');
-    // Flag will be cleared when frontend calls /api/audio-finished
-    
   } catch (error) {
     console.error('TTS ERROR:', error.message);
-    // Clear flag on error
-    audioPlayingStatus.set(sessionId, false);
-    console.log('❌ TTS Error - Cleared audio playing flag');
   }
 }
 
@@ -1054,157 +883,29 @@ const botSessionMap = new Map();
 const botEventMap = new Map();
 const sessionToBotMap = new Map(); 
 
-async function sendSummaryViaN8n(eventId, sessionId, transcriptId) {
+async function sendSummaryViaN8n(eventId, sessionId) {
   try {
     console.log('\n📧 SENDING MEETING SUMMARY VIA N8N');
     console.log('='.repeat(80));
     
-    // Get Deepgram conversation history (correct order)
-    const deepgramHistory = conversationHistory.get(sessionId) || [];
+    // Get conversation history
+    const history = conversationHistory.get(sessionId) || [];
     
-    if (deepgramHistory.length === 0) {
+    if (history.length === 0) {
       console.log('⚠️  No conversation to summarize');
       return;
     }
     
-    console.log(`📊 Deepgram history has ${deepgramHistory.length} messages`);
+    // Format full transcript
+    const fullTranscript = history.map(msg => {
+      const time = new Date(msg.timestamp).toLocaleTimeString();
+      return `[${time}] ${msg.speaker}: ${msg.content}`;
+    }).join('\n\n');
     
-    // Fetch complete Recall transcript from API
-    console.log('\n🔄 Fetching complete Recall transcript...');
-      const recallMessages = await fetchRecallTranscript(transcriptId);
+    console.log(`📝 Transcript length: ${fullTranscript.length} characters`);
+    console.log(`💬 Total messages: ${history.length}`);
     
-    if (!recallMessages || recallMessages.length === 0) {
-      console.log('⚠️  Could not fetch Recall transcript, using Deepgram only');
-    } else {
-      console.log(`✅ Recall transcript has ${recallMessages.length} messages`);
-    }
-    
-    // Format both for LLM
-    const deepgramText = deepgramHistory.map(msg => 
-      `${msg.speaker}: ${msg.content}`
-    ).join('\n');
-    
-    const recallText = recallMessages ? recallMessages.map(msg => 
-      `${msg.speaker}: ${msg.text}`
-    ).join('\n') : '';
-    
-    console.log('\n📜 DEEPGRAM TRANSCRIPT (correct order):');
-    console.log('┌' + '─'.repeat(78) + '┐');
-    deepgramText.split('\n').slice(0, 10).forEach(line => {
-      console.log('│ ' + line.substring(0, 77).padEnd(77) + '│');
-    });
-    console.log('└' + '─'.repeat(78) + '┘');
-    
-    if (recallText) {
-      console.log('\n📜 RECALL TRANSCRIPT (has real names):');
-      console.log('┌' + '─'.repeat(78) + '┐');
-      recallText.split('\n').slice(0, 10).forEach(line => {
-        console.log('│ ' + line.substring(0, 77).padEnd(77) + '│');
-      });
-      console.log('└' + '─'.repeat(78) + '┘');
-    }
-    
-    // Use LLM to generate final transcript with real names
-    let fullTranscript;
-    
-   if (recallText) {
-  console.log('\n🤖 Using LLM to generate final transcript with real names...');
-  console.log('🦙 Model: Llama 4 Maverick 17B');
-  
- const transcriptResponse = await groq.chat.completions.create({
-  model: 'meta-llama/llama-4-maverick-17b-128e-instruct',
-  messages: [
-    {
-      role: 'system',
-      content: `You are a transcript formatter. Your ONLY job is to output the final transcript.
-
-CRITICAL RULES:
-- DO NOT explain your reasoning
-- DO NOT show your thinking process
-- DO NOT add any commentary
-- OUTPUT ONLY THE TRANSCRIPT LINES
-- NO introductions, NO explanations, NO analysis
-
-INPUT:
-1. DEEPGRAM TRANSCRIPT: Correct order, generic speaker labels (Speaker 0, Speaker 1, AI Assistant)
-2. RECALL TRANSCRIPT: Real participant names
-
-OUTPUT FORMAT (copy this EXACTLY):
-[HH:MM:SS] Real Name: exact message
-[HH:MM:SS] Real Name: exact message
-[HH:MM:SS] James: exact message
-
-MATCHING RULES:
-- Match "Speaker 0/1/2" to real names from RECALL by comparing what they said
-- Replace "AI Assistant" with "James"
-- Use DEEPGRAM's exact order and text
-- Handle multilingual content (English, Hindi, etc.)
-- If timestamps missing, use placeholder like [00:00:00]
-
-EXAMPLE OUTPUT (this is what you should produce):
-[12:30:15] Atul Garg: Hey, James. How are you?
-[12:30:17] James: I'm doing great, thanks!
-[12:30:20] Atul Garg: What is your name?
-[12:30:22] James: I'm James, your AI assistant!
-
-NOW GENERATE THE TRANSCRIPT - OUTPUT ONLY THE LINES, NOTHING ELSE.`
-    },
-    {
-      role: 'user',
-      content: `DEEPGRAM TRANSCRIPT:
-${deepgramText}
-
-RECALL TRANSCRIPT:
-${recallText}
-
-Output the final transcript now (lines only, no explanation):`
-    }
-  ],
-  max_completion_tokens: 2000,
-  temperature: 0.3,  // ← Lower temperature for more deterministic output
-  top_p: 0.9
-});
-      fullTranscript = transcriptResponse.choices[0].message.content.trim();
-      
-      console.log('\n📥 RAW LLM RESPONSE:');
-      console.log('Length:', fullTranscript.length, 'characters');
-      console.log('Lines:', fullTranscript.split('\n').length);
-      
-      // Fallback if LLM returns empty
-      if (fullTranscript.length < 10) {
-        console.log('⚠️  LLM returned empty, using Deepgram as fallback');
-        fullTranscript = deepgramHistory.map(msg => {
-          const time = new Date(msg.timestamp).toLocaleTimeString();
-          const speaker = msg.speaker === 'AI Assistant' ? 'James' : msg.speaker;
-          return `[${time}] ${speaker}: ${msg.content}`;
-        }).join('\n\n');
-      }
-      
-    } else {
-      // No Recall data, use Deepgram only
-      console.log('\n📝 Using Deepgram transcript only (no Recall data)');
-      fullTranscript = deepgramHistory.map(msg => {
-        const time = new Date(msg.timestamp).toLocaleTimeString();
-        const speaker = msg.speaker === 'AI Assistant' ? 'James' : msg.speaker;
-        return `[${time}] ${speaker}: ${msg.content}`;
-      }).join('\n\n');
-    }
-    
-    console.log('\n✅ FINAL TRANSCRIPT GENERATED:');
-    console.log('┌' + '─'.repeat(78) + '┐');
-    const lines = fullTranscript.split('\n').filter(l => l.trim());
-    lines.slice(0, 15).forEach(line => {
-      console.log('│ ' + line.substring(0, 77).padEnd(77) + '│');
-    });
-    if (lines.length > 15) {
-      console.log('│ ' + `... (${lines.length - 15} more lines)`.padEnd(77) + '│');
-    }
-    console.log('└' + '─'.repeat(78) + '┘');
-    
-    console.log(`\n📝 Final transcript length: ${fullTranscript.length} characters`);
-    console.log(`💬 Total lines: ${lines.length}`);
-    
-    // Generate summary
+    // Generate summary using GPT-OSS-20B
     console.log('\n🤖 Generating summary with GPT-OSS-20B...');
     const summaryResponse = await groq.chat.completions.create({
       model: 'openai/gpt-oss-20b',
@@ -1216,11 +917,8 @@ Output the final transcript now (lines only, no explanation):`
           - Key decisions made
           - Important questions and answers
           - Action items (if any)
-          - Participant names when relevant
           
-          Use HTML tags like <h3>, <p>, <ul>, <li> for structure.
-          
-          IMPORTANT: Even if the meeting was short or informal, create a meaningful summary highlighting what was discussed.`
+          Use HTML tags like <h3>, <p>, <ul>, <li> for structure.`
         },
         {
           role: 'user',
@@ -1244,42 +942,51 @@ Output the final transcript now (lines only, no explanation):`
     const meetingTitle = event.data.summary || 'Meeting';
     const meetingDate = event.data.start?.dateTime || event.data.start?.date;
     const meetingUrl = extractMeetingUrl(event.data);
-    
+console.log('   Meeting URL:', meetingUrl);
     // Calculate duration
     const startTime = new Date(event.data.start?.dateTime);
     const endTime = new Date(event.data.end?.dateTime);
     const durationMinutes = Math.round((endTime - startTime) / 1000 / 60);
     const duration = `${durationMinutes} minutes`;
+   // Get all calendar attendees (exclude declined)
+console.log('\n📅 Getting participants from Calendar attendees...');
+const attendees = event.data.attendees || [];
+
+let participantEmails = attendees
+  .filter(attendee => {
+    return attendee.email && 
+           attendee.responseStatus !== 'declined';
+  })
+  .map(attendee => attendee.email);
+
+console.log(`   Found ${participantEmails.length} attendees from calendar`);
+
+// Add creator/host if not already in list
+if (event.data.creator?.email) {
+  if (!participantEmails.includes(event.data.creator.email)) {
+    participantEmails.push(event.data.creator.email);
+    console.log(`   ✅ Added creator: ${event.data.creator.email}`);
+  }
+}
+
+participantEmails = [...new Set(participantEmails)];
+
+console.log(`\n📧 Final participant count: ${participantEmails.length}`);
+console.log('   Emails:', participantEmails.join(', '));
+
+if (participantEmails.length === 0) {
+  console.log('\n⚠️  No participants found in calendar attendees!');
+  console.log('   Summary generated but not sent - no recipients');
+  return;
+}
     
-    // Get all calendar attendees (exclude declined)
-    console.log('\n📅 Getting participants from Calendar attendees...');
-    const attendees = event.data.attendees || [];
-    
-    let participantEmails = attendees
-      .filter(attendee => {
-        return attendee.email && 
-               attendee.responseStatus !== 'declined';
-      })
-      .map(attendee => attendee.email);
-    
-    console.log(`   Found ${participantEmails.length} attendees from calendar`);
-    
-    // Add creator/host if not already in list
-    if (event.data.creator?.email) {
-      if (!participantEmails.includes(event.data.creator.email)) {
-        participantEmails.push(event.data.creator.email);
-        console.log(`   ✅ Added creator: ${event.data.creator.email}`);
-      }
-    }
-    
-    participantEmails = [...new Set(participantEmails)];
-    
-    console.log(`\n📧 Final participant count: ${participantEmails.length}`);
+    console.log(`📧 Found ${participantEmails.length} participants from meeting`);
     console.log('   Emails:', participantEmails.join(', '));
     
     if (participantEmails.length === 0) {
-      console.log('\n⚠️  No participants found in calendar attendees!');
+      console.log('⚠️  No participants with emails found in meeting');
       console.log('   Summary generated but not sent - no recipients');
+      console.log('   NOTE: Participants may have joined anonymously or Recall.ai could not capture emails');
       return;
     }
     
@@ -1329,114 +1036,8 @@ Output the final transcript now (lines only, no explanation):`
     
   } catch (error) {
     console.error('❌ Error sending summary via n8n:', error.message);
-    console.error('Full error:', error);
   }
 }
-async function fetchRecallTranscript(transcriptId) {
-  try {
-    console.log('\n📥 FETCHING COMPLETE RECALL TRANSCRIPT FROM API');
-    console.log('='.repeat(80));
-    console.log('   Transcript ID:', transcriptId);
-    
-    // Fetch the transcript metadata
-    const transcriptResponse = await fetch(
-      `https://us-west-2.recall.ai/api/v1/transcript/${transcriptId}/`,
-      {
-        headers: {
-          'Authorization': `Token ${RECALL_API_KEY}`,
-          'Accept': 'application/json'
-        }
-      }
-    );
-    
-    if (!transcriptResponse.ok) {
-      const errorText = await transcriptResponse.text();
-      console.log('   ❌ Failed to fetch transcript:', transcriptResponse.status, errorText);
-      return null;
-    }
-    
-    const transcriptData = await transcriptResponse.json();
-    
-    console.log('   ✅ Transcript metadata fetched');
-    console.log('   Status:', transcriptData.status?.code);
-    
-    // Check if transcript has a download URL
-    if (!transcriptData.data?.download_url) {
-      console.log('   ❌ No download_url in transcript data');
-      return null;
-    }
-    
-    console.log('   📥 Downloading transcript from URL...');
-    
-    const dataResponse = await fetch(transcriptData.data.download_url);
-    
-    if (!dataResponse.ok) {
-      console.log('   ❌ Failed to download transcript data:', dataResponse.status);
-      return null;
-    }
-    
-    const participantData = await dataResponse.json();
-    
-    console.log('   ✅ Transcript content downloaded');
-    console.log('   Number of participants:', participantData.length);
-    
-    // Process each participant's words
-    const messages = [];
-    let totalWords = 0;
-    
-    for (const participantObj of participantData) {
-      const participant = participantObj.participant;
-      const words = participantObj.words || [];
-      
-      const speakerName = participant.name || `Participant ${participant.id}`;
-      
-      console.log(`   👤 Processing ${speakerName}: ${words.length} words`);
-      totalWords += words.length;
-      
-      // Group consecutive words from same speaker
-      let currentText = [];
-      
-      for (const word of words) {
-        currentText.push(word.text);
-      }
-      
-      // Add all words from this participant as one message
-      if (currentText.length > 0) {
-        messages.push({
-          speaker: speakerName,
-          text: currentText.join(' ')
-        });
-      }
-    }
-    
-    console.log('   📊 Total words processed:', totalWords);
-    console.log('   📊 Processed into', messages.length, 'messages');
-    
-    if (messages.length === 0) {
-      console.log('   ⚠️  No messages found in transcript data');
-      return null;
-    }
-    
-    console.log('\n📜 RECALL TRANSCRIPT PREVIEW:');
-    console.log('┌' + '─'.repeat(78) + '┐');
-    messages.slice(0, 5).forEach(msg => {
-      const line = `${msg.speaker}: ${msg.text.substring(0, 50)}...`;
-      console.log('│ ' + line.substring(0, 77).padEnd(77) + '│');
-    });
-    if (messages.length > 5) {
-      console.log('│ ' + `... (${messages.length - 5} more messages)`.padEnd(77) + '│');
-    }
-    console.log('└' + '─'.repeat(78) + '┘');
-    
-    return messages;
-    
-  } catch (error) {
-    console.error('❌ Error fetching Recall transcript:', error.message);
-    console.error('   Stack:', error.stack);
-    return null;
-  }
-}
-
 // Clean up old processed events every hour
 setInterval(() => {
   const oneHourAgo = Date.now() - (60 * 60 * 1000);
@@ -1539,15 +1140,11 @@ app.post('/api/recall-webhook', async (req, res) => {
   try {
     const { event, data } = req.body;
     const bot_id = data?.bot?.id;
-    const recording_id = data?.recording?.id;
-    const transcript_id = data?.transcript?.id;
     const eventData = data?.data;
     
     console.log('\n📬 RECALL.AI WEBHOOK RECEIVED');
     console.log('   Event:', event);
     console.log('   Bot ID:', bot_id);
-    console.log('   Recording ID:', recording_id);
-    console.log('   Transcript ID:', transcript_id);
     
     // Acknowledge immediately
     res.status(200).json({ received: true });
@@ -1557,65 +1154,12 @@ app.post('/api/recall-webhook', async (req, res) => {
       return;
     }
     
-    // Handle recording.done - Create async transcript
-    if (event === 'recording.done') {
-      console.log('📼 RECORDING DONE - Creating async transcript...');
+    if (event === 'bot.call_ended') {
+      console.log('🏁 BOT CALL ENDED - MEETING FINISHED');
+      console.log('   Reason:', eventData?.sub_code || 'unknown');
       
-      if (!recording_id) {
-        console.log('   ❌ No recording ID found');
-        return;
-      }
-      
-      // Create async transcript
-      try {
-        const transcriptResponse = await fetch(
-          `https://us-west-2.recall.ai/api/v1/recording/${recording_id}/create_transcript/`,
-          {
-            method: 'POST',
-            headers: {
-              'Authorization': `Token ${RECALL_API_KEY}`,
-              'Accept': 'application/json',
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-              provider: {
-                recallai_async: {
-                  language_code: 'en'
-                }
-              },
-              diarization: {
-                use_separate_streams_when_available: true
-              }
-            })
-          }
-        );
-        
-        if (transcriptResponse.ok) {
-          const result = await transcriptResponse.json();
-          console.log('   ✅ Async transcript job created');
-          console.log('   Transcript ID:', result.id);
-        } else {
-          const errorText = await transcriptResponse.text();
-          console.log('   ❌ Failed to create transcript:', transcriptResponse.status, errorText);
-        }
-      } catch (error) {
-        console.error('   ❌ Error creating transcript:', error.message);
-      }
-      
-      return;
-    }
-    
-    // Handle transcript.done - Transcript is ready
-    if (event === 'transcript.done') {
-      console.log('📝 TRANSCRIPT DONE - Ready to fetch!');
-      
-      if (!transcript_id) {
-        console.log('   ❌ No transcript ID found');
-        return;
-      }
-      
-      // Fetch bot details to get metadata
-      console.log('   📥 Fetching bot metadata...');
+      // Fetch bot details to get metadata (survives server restarts!)
+      console.log('   📥 Fetching bot metadata from Recall.ai...');
       
       const botResponse = await fetch(`https://us-west-2.recall.ai/api/v1/bot/${bot_id}`, {
         method: 'GET',
@@ -1637,28 +1181,19 @@ app.post('/api/recall-webhook', async (req, res) => {
       console.log('   ✅ Retrieved from bot metadata:');
       console.log('      Event ID:', eventId);
       console.log('      Session ID:', sessionId);
-      console.log('      Transcript ID:', transcript_id);
       
-      if (eventId && sessionId && transcript_id) {
-        // Wait 5 seconds then generate summary
+      if (eventId && sessionId) {
+        // Wait for transcripts to settle
         setTimeout(async () => {
-          console.log('📧 Generating meeting summary with transcript...');
-          await sendSummaryViaN8n(eventId, sessionId, transcript_id);
+          console.log('📧 Automatically sending meeting summary...');
+          await sendSummaryViaN8n(eventId, sessionId);
         }, 5000);
       } else {
-        console.log('   ⚠️  Missing required data');
+        console.log('   ⚠️  Missing eventId or sessionId in bot metadata');
       }
-      
-      return;
+    } else {
+      console.log('   ℹ️  Ignoring event:', event);
     }
-    
-    // Handle bot.call_ended (just log it, wait for recording.done)
-    if (event === 'bot.call_ended') {
-      console.log('🏁 BOT CALL ENDED - Waiting for recording.done...');
-      return;
-    }
-    
-    console.log('   ℹ️  Ignoring event:', event);
     
   } catch (error) {
     console.error('❌ Recall webhook error:', error.message);
@@ -1762,25 +1297,15 @@ app.post('/api/connect', async (req, res) => {
     });
     
     dgConnection.on('Results', async(data) => {
-  const transcript = data.channel.alternatives[0].transcript;
-  
-  if (transcript && transcript.length > 0) {
-    
-    // ✅ CHECK: Is audio currently playing?
-    const isAudioPlaying = audioPlayingStatus.get(sessionId);
-    
-    if (isAudioPlaying) {
-      console.log('\n🔇 AUDIO IS PLAYING - IGNORING TRANSCRIPT');
-      console.log(`   Ignored: "${transcript}"`);
-      console.log(`   Reason: Bot is currently speaking`);
-      return; // Skip all processing
-    }
-    
-    let speakerId = "Unknown";
-    let speakerNumber = null;
-    
-    console.log('\n' + '='.repeat(80));
-    console.log('📊 DEEPGRAM RESPONSE RECEIVED');
+      const transcript = data.channel.alternatives[0].transcript;
+      
+      if (transcript && transcript.length > 0) {
+        
+        let speakerId = "Unknown";
+        let speakerNumber = null;
+        
+        console.log('\n' + '='.repeat(80));
+        console.log('📊 DEEPGRAM RESPONSE RECEIVED');
         console.log('='.repeat(80));
         
         console.log('\n🔍 CHECKING FOR DIARIZATION DATA:');
@@ -1836,160 +1361,47 @@ app.post('/api/connect', async (req, res) => {
         }).catch(err => console.error('Pusher error:', err));
         
 if (data.is_final && data.speech_final) {
-  // ========================================================================
-  // PATH 1: NORMAL COMPLETION (speech_final=true)
-  // ========================================================================
   
   if (transcript !== lastProcessedTranscript) {
     
+    const t0 = Date.now();
+    
     console.log('\n' + '🚀'.repeat(40));
-    console.log('🚀 NORMAL PATH: is_final=true AND speech_final=true');
+    console.log('🚀 PROCESSING COMPLETE UTTERANCE (NORMAL PATH)');
     console.log('🚀'.repeat(40));
     console.log(`\n👤 Speaker: ${speakerId}`);
     console.log(`💬 Transcript: "${transcript}"`);
     
-    const t0 = Date.now();
+    const t_stt_end = Date.now();
+    console.log(`\n⏱️  [${t_stt_end - t0}ms] STT Processing Complete`);
     
-    // Check if buffer exists for this session
-    const buffer = incompleteTranscripts.get(sessionId);
+    pusher.trigger(channel, 'transcript', {
+      text: transcript,
+      speaker: speakerId
+    }).then(() => {
+      console.log(`✅ Transcript sent to frontend via Pusher`);
+    }).catch(err => {
+      console.error('❌ Pusher error:', err);
+    });
     
-    if (buffer && buffer.text.length > 0 && buffer.speaker === speakerId) {
-      // Buffer exists! Concatenate with new text
-      console.log('\n📦 BUFFER EXISTS - Concatenating...');
-      console.log(`   Previous buffer: "${buffer.text}"`);
-      console.log(`   New fragment: "${transcript}"`);
-      
-      const fullText = buffer.text + ' ' + transcript;
-      console.log(`   ✅ Concatenated text: "${fullText}"`);
-      
-      // ✅ CHECK IF CONCATENATED TEXT IS COMPLETE
-      const t_gpt_start = Date.now();
-      console.log('\n🔍 CHECKING IF CONCATENATED TEXT IS COMPLETE...');
-      console.log(`   Model: openai/gpt-oss-20b`);
-      console.log(`   Checking: "${fullText}"`);
-      
-      try {
-        const isComplete = await checkIfSentenceComplete(fullText, t_gpt_start);
-        
-        const t_gpt_end = Date.now();
-        console.log(`\n⏱️  [${t_gpt_end - t_gpt_start}ms] GPT Check Complete`);
-        console.log(`📊 Result: ${isComplete ? 'COMPLETE ✅' : 'INCOMPLETE ❌'}`);
-        
-        if (isComplete) {
-          console.log('\n✅ GPT CONFIRMED: Concatenated text is COMPLETE');
-          console.log('   🚀 Processing complete sentence...\n');
-          
-          // Send full text to frontend
-          pusher.trigger(channel, 'transcript', {
-            text: fullText,
-            speaker: speakerId
-          }).then(() => {
-            console.log(`✅ Complete transcript sent to frontend via Pusher`);
-          }).catch(err => {
-            console.error('❌ Pusher error:', err);
-          });
-          
-          // Add to conversation history
-          console.log('\n📚 ADDING TO CONVERSATION HISTORY:');
-          console.log(`   Before: ${conversationHistory.get(sessionId)?.length || 0} messages`);
-          
-          addToHistory(sessionId, speakerId, fullText);
-          
-          console.log(`   After: ${conversationHistory.get(sessionId)?.length || 0} messages`);
-          console.log(`   Added: ${speakerId}: "${fullText}"`);
-          
-          // Clear buffer
-          incompleteTranscripts.delete(sessionId);
-          console.log('   🧹 Cleared buffer');
-          
-          // Send to LLM
-          console.log('\n🤖 SENDING TO LLM FOR DECISION...');
-          console.log('-'.repeat(80));
-          
-          processWithLLMContextAware(sessionId, t0);
-          
-          lastProcessedTranscript = fullText;
-          
-        } else {
-          console.log('\n❌ GPT CONFIRMED: Concatenated text is INCOMPLETE');
-          console.log('   📦 Keeping in buffer, waiting for more audio...\n');
-          
-          // Update buffer with concatenated text
-          buffer.text = fullText;
-          buffer.fragments.push(transcript);
-          
-          console.log(`   📦 Updated buffer (${buffer.fragments.length} fragments)`);
-          console.log(`   Buffer now: "${buffer.text}"`);
-          console.log('   ⏳ Waiting for next fragment...');
-          
-          // Check safety limit
-          if (buffer.fragments.length >= 10) {
-            console.log('   ⚠️  WARNING: Buffer has 10+ fragments!');
-            console.log('   🔄 Force processing to prevent infinite buffering...');
-            
-            // Force process
-            pusher.trigger(channel, 'transcript', {
-              text: fullText,
-              speaker: speakerId
-            }).catch(err => console.error('Pusher error:', err));
-            
-            addToHistory(sessionId, speakerId, fullText);
-            processWithLLMContextAware(sessionId, t0);
-            
-            // Clear buffer
-            incompleteTranscripts.delete(sessionId);
-            lastProcessedTranscript = fullText;
-          }
-        }
-        
-      } catch (error) {
-        console.error('\n❌ GPT CHECK ERROR:', error.message);
-        console.log('   ⚠️  Error during completeness check');
-        console.log('   🔄 Falling back to processing as complete...\n');
-        
-        // Fallback: process it anyway
-        pusher.trigger(channel, 'transcript', {
-          text: fullText,
-          speaker: speakerId
-        }).catch(err => console.error('Pusher error:', err));
-        
-        addToHistory(sessionId, speakerId, fullText);
-        processWithLLMContextAware(sessionId, t0);
-        
-        incompleteTranscripts.delete(sessionId);
-        lastProcessedTranscript = fullText;
-      }
-      
-    } else {
-      // No buffer, process normally
-      console.log('\n📝 No buffer - processing directly');
-      
-      const t_stt_end = Date.now();
-      console.log(`\n⏱️  [${t_stt_end - t0}ms] STT Processing Complete`);
-      
-      pusher.trigger(channel, 'transcript', {
-        text: transcript,
-        speaker: speakerId
-      }).then(() => {
-        console.log(`✅ Transcript sent to frontend via Pusher`);
-      }).catch(err => {
-        console.error('❌ Pusher error:', err);
-      });
-      
-      console.log('\n📚 ADDING TO CONVERSATION HISTORY:');
-      console.log(`   Before: ${conversationHistory.get(sessionId)?.length || 0} messages`);
-      
-      addToHistory(sessionId, speakerId, transcript);
-      
-      console.log(`   After: ${conversationHistory.get(sessionId)?.length || 0} messages`);
-      
-      console.log('\n🤖 SENDING TO LLM FOR DECISION...');
-      console.log('-'.repeat(80));
-      
-      processWithLLMContextAware(sessionId, t0);
-      
-      lastProcessedTranscript = transcript;
-    }
+    console.log('\n📚 ADDING TO CONVERSATION HISTORY:');
+    console.log(`   Before: ${conversationHistory.get(sessionId)?.length || 0} messages`);
+    
+    addToHistory(sessionId, speakerId, transcript);
+    
+    console.log(`   After: ${conversationHistory.get(sessionId)?.length || 0} messages`);
+    console.log('\n📋 CURRENT CONVERSATION HISTORY:');
+    const history = conversationHistory.get(sessionId) || [];
+    history.forEach((msg, idx) => {
+      console.log(`   [${idx + 1}] ${msg.speaker}: "${msg.content}"`);
+    });
+    
+    console.log('\n🤖 SENDING TO LLM FOR DECISION...');
+    console.log('-'.repeat(80));
+    
+    processWithLLMContextAware(sessionId, t0);
+    
+    lastProcessedTranscript = transcript;
     
   } else {
     console.log('\n⚠️  DUPLICATE TRANSCRIPT DETECTED - SKIPPING');
@@ -1997,196 +1409,75 @@ if (data.is_final && data.speech_final) {
   }
 }
 else if (data.is_final && !data.speech_final) {
-  // ========================================================================
-  // PATH 2: STUCK DETECTION (is_final=true BUT speech_final=false)
-  // ========================================================================
   
   console.log('\n' + '⚠️'.repeat(40));
   console.log('⚠️  STUCK DETECTION: is_final=true BUT speech_final=false');
   console.log('⚠️'.repeat(40));
   console.log(`\n👤 Speaker: ${speakerId}`);
-  console.log(`💬 New Transcript: "${transcript}"`);
+  console.log(`💬 Transcript: "${transcript}"`);
+  console.log(`⏱️  Waiting for speech_final, but calling GPT to check if complete...`);
   
   if (transcript !== lastProcessedTranscript) {
     
-    // Get or create buffer for this session
-    if (!incompleteTranscripts.has(sessionId)) {
-      incompleteTranscripts.set(sessionId, { speaker: null, text: '', fragments: [] });
-    }
+    const t_gpt_start = Date.now();
+    console.log(`\n🔍 CALLING GPT TO CHECK SENTENCE COMPLETENESS...`);
+    console.log(`   Model: openai/gpt-oss-20b`);
+    console.log(`   Transcript to check: "${transcript}"`);
     
-    const buffer = incompleteTranscripts.get(sessionId);
-    
-    // Check if buffer exists
-    if (buffer.text.length > 0) {
-      // Buffer exists - concatenate with new fragment
-      console.log('\n📦 BUFFER EXISTS - Concatenating...');
-      console.log(`   Previous buffer: "${buffer.text}"`);
-      console.log(`   New fragment: "${transcript}"`);
+    try {
+      const isComplete = await checkIfSentenceComplete(transcript, t_gpt_start);
       
-      buffer.fragments.push(transcript);
-      buffer.text = buffer.text + ' ' + transcript;
-      buffer.speaker = speakerId;
+      const t_gpt_end = Date.now();
+      console.log(`\n⏱️  [${t_gpt_end - t_gpt_start}ms] GPT Check Complete`);
+      console.log(`📊 Result: ${isComplete ? 'COMPLETE ✅' : 'INCOMPLETE ❌'}`);
       
-      const fullText = buffer.text;
-      console.log(`   ✅ Full buffered text (${buffer.fragments.length} fragments): "${fullText}"`);
-      
-      // Check if concatenated text is complete
-      const t_gpt_start = Date.now();
-      console.log(`\n🔍 CHECKING IF CONCATENATED TEXT IS COMPLETE...`);
-      console.log(`   Model: openai/gpt-oss-20b`);
-      console.log(`   Checking: "${fullText}"`);
-      
-      try {
-        const isComplete = await checkIfSentenceComplete(fullText, t_gpt_start);
+      if (isComplete) {
+        console.log('\n✅ GPT CONFIRMED: Sentence is COMPLETE');
+        console.log('   🔄 OVERRIDING speech_final → true');
+        console.log('   🚀 Processing as complete utterance...\n');
         
-        const t_gpt_end = Date.now();
-        console.log(`\n⏱️  [${t_gpt_end - t_gpt_start}ms] GPT Check Complete`);
-        console.log(`📊 Result: ${isComplete ? 'COMPLETE ✅' : 'INCOMPLETE ❌'}`);
+        const t0 = Date.now();
         
-        if (isComplete) {
-          console.log('\n✅ GPT CONFIRMED: Concatenated text is COMPLETE');
-          console.log('   🚀 Processing complete buffered utterance...\n');
-          
-          const t0 = Date.now();
-          
-          // Send full text to frontend
-          pusher.trigger(channel, 'transcript', {
-            text: fullText,
-            speaker: speakerId
-          }).then(() => {
-            console.log(`✅ Complete transcript sent to frontend via Pusher`);
-          }).catch(err => {
-            console.error('❌ Pusher error:', err);
-          });
-          
-          // Add to conversation history
-          console.log('\n📚 ADDING TO CONVERSATION HISTORY:');
-          console.log(`   Before: ${conversationHistory.get(sessionId)?.length || 0} messages`);
-          
-          addToHistory(sessionId, speakerId, fullText);
-          
-          console.log(`   After: ${conversationHistory.get(sessionId)?.length || 0} messages`);
-          console.log(`   Added: ${speakerId}: "${fullText}"`);
-          
-          // Clear buffer
-          incompleteTranscripts.delete(sessionId);
-          console.log('   🧹 Cleared buffer');
-          
-          // Send to LLM
-          console.log('\n🤖 SENDING TO LLM FOR DECISION...');
-          console.log('-'.repeat(80));
-          
-          processWithLLMContextAware(sessionId, t0);
-          
-          lastProcessedTranscript = fullText;
-          
-        } else {
-          console.log('\n❌ GPT CONFIRMED: Concatenated text is INCOMPLETE');
-          console.log(`   📦 Keeping in buffer (${buffer.fragments.length} fragments)`);
-          console.log('   ⏳ Waiting for more audio to concatenate...\n');
-          
-          // Check if buffer is getting too large (safety limit)
-          if (buffer.fragments.length >= 10) {
-            console.log('   ⚠️  WARNING: Buffer has 10+ fragments!');
-            console.log('   🔄 Force processing to prevent infinite buffering...');
-            
-            // Force process it
-            pusher.trigger(channel, 'transcript', {
-              text: fullText,
-              speaker: speakerId
-            }).catch(err => console.error('Pusher error:', err));
-            
-            addToHistory(sessionId, speakerId, fullText);
-            processWithLLMContextAware(sessionId, Date.now());
-            
-            // Clear buffer
-            incompleteTranscripts.delete(sessionId);
-            lastProcessedTranscript = fullText;
-          }
-        }
+        pusher.trigger(channel, 'transcript', {
+          text: transcript,
+          speaker: speakerId
+        }).then(() => {
+          console.log(`✅ Transcript sent to frontend via Pusher`);
+        }).catch(err => {
+          console.error('❌ Pusher error:', err);
+        });
         
-      } catch (error) {
-        console.error('\n❌ GPT CHECK ERROR:', error.message);
-        console.log('   ⚠️  Error during completeness check');
-        console.log('   📦 Keeping current buffer, waiting for more audio...\n');
+        console.log('\n📚 ADDING TO CONVERSATION HISTORY:');
+        console.log(`   Before: ${conversationHistory.get(sessionId)?.length || 0} messages`);
+        
+        addToHistory(sessionId, speakerId, transcript);
+        
+        console.log(`   After: ${conversationHistory.get(sessionId)?.length || 0} messages`);
+        
+        console.log('\n🤖 SENDING TO LLM FOR DECISION...');
+        console.log('-'.repeat(80));
+        
+        processWithLLMContextAware(sessionId, t0);
+        
+        lastProcessedTranscript = transcript;
+        
+      } else {
+        console.log('\n❌ GPT CONFIRMED: Sentence is INCOMPLETE');
+        console.log('   ⏳ Keeping speech_final as false');
+        console.log('   ⏳ Waiting for more audio from user...\n');
       }
       
-    } else {
-      // No buffer yet - create new buffer with this fragment
-      console.log('\n🆕 CREATING NEW BUFFER');
-      console.log(`   First fragment: "${transcript}"`);
-      
-      // Check if this first fragment itself is complete
-      const t_gpt_start = Date.now();
-      console.log(`\n🔍 CHECKING IF FIRST FRAGMENT IS COMPLETE...`);
-      console.log(`   Model: openai/gpt-oss-20b`);
-      console.log(`   Checking: "${transcript}"`);
-      
-      try {
-        const isComplete = await checkIfSentenceComplete(transcript, t_gpt_start);
-        
-        const t_gpt_end = Date.now();
-        console.log(`\n⏱️  [${t_gpt_end - t_gpt_start}ms] GPT Check Complete`);
-        console.log(`📊 Result: ${isComplete ? 'COMPLETE ✅' : 'INCOMPLETE ❌'}`);
-        
-        if (isComplete) {
-          console.log('\n✅ GPT CONFIRMED: First fragment is already COMPLETE');
-          console.log('   🚀 Processing directly (no buffering needed)...\n');
-          
-          const t0 = Date.now();
-          
-          pusher.trigger(channel, 'transcript', {
-            text: transcript,
-            speaker: speakerId
-          }).then(() => {
-            console.log(`✅ Transcript sent to frontend via Pusher`);
-          }).catch(err => {
-            console.error('❌ Pusher error:', err);
-          });
-          
-          console.log('\n📚 ADDING TO CONVERSATION HISTORY:');
-          console.log(`   Before: ${conversationHistory.get(sessionId)?.length || 0} messages`);
-          
-          addToHistory(sessionId, speakerId, transcript);
-          
-          console.log(`   After: ${conversationHistory.get(sessionId)?.length || 0} messages`);
-          
-          console.log('\n🤖 SENDING TO LLM FOR DECISION...');
-          console.log('-'.repeat(80));
-          
-          processWithLLMContextAware(sessionId, t0);
-          
-          lastProcessedTranscript = transcript;
-          
-        } else {
-          console.log('\n❌ GPT CONFIRMED: First fragment is INCOMPLETE');
-          console.log('   📦 Starting buffer with this fragment');
-          console.log('   ⏳ Waiting for more audio to concatenate...\n');
-          
-          // Create buffer
-          buffer.speaker = speakerId;
-          buffer.text = transcript;
-          buffer.fragments = [transcript];
-        }
-        
-      } catch (error) {
-        console.error('\n❌ GPT CHECK ERROR:', error.message);
-        console.log('   ⚠️  Error during completeness check');
-        console.log('   📦 Creating buffer as fallback...\n');
-        
-        // Fallback: create buffer
-        buffer.speaker = speakerId;
-        buffer.text = transcript;
-        buffer.fragments = [transcript];
-      }
+    } catch (error) {
+      console.error('\n❌ GPT CHECK ERROR:', error.message);
+      console.log('   ⚠️  Falling back to waiting for speech_final');
+      console.log('   ⏳ Will wait for next transcript...\n');
     }
     
   } else {
-    console.log('\n⚠️  Already processed this exact transcript, skipping');
+    console.log('\n⚠️  Already checked this transcript, skipping GPT call');
   }
   
 } else {
-  // Not final yet (is_final=false)
   if (!data.is_final) {
     console.log('⏳ Not confident yet (is_final: false)');
   } else if (!data.speech_final) {
@@ -2200,28 +1491,11 @@ else if (data.is_final && !data.speech_final) {
       console.error('❌ STT ERROR:', error.message);
     });
     
-  dgConnection.on('close', () => {
-  console.log(`🔴 Disconnected: ${sessionId}`);
-  deepgramConnections.delete(sessionId);
-  
-  // Process any remaining incomplete transcript before clearing
-  const buffer = incompleteTranscripts.get(sessionId);
-  if (buffer && buffer.text.length > 0) {
-    console.log(`📝 Processing remaining buffered text before disconnect: "${buffer.text}"`);
-    addToHistory(sessionId, buffer.speaker, buffer.text);
-  }
-  
-  // Clear buffer
-  incompleteTranscripts.delete(sessionId);
-  console.log(`🧹 Cleared incomplete transcript buffer`);
-  
-  // Clear audio playing status
-  audioPlayingStatus.delete(sessionId);
-  console.log(`🧹 Cleared audio playing status`);
-  
-  // Don't delete conversationHistory - keep it for summary generation
-  console.log(`📝 Keeping conversation history for summary (${conversationHistory.get(sessionId)?.length || 0} messages)`);
-});
+    dgConnection.on('close', () => {
+      console.log(`🔴 Disconnected: ${sessionId}`);
+      deepgramConnections.delete(sessionId);
+      conversationHistory.delete(sessionId);
+    });
     
     res.json({ 
       success: true, 
@@ -2263,36 +1537,18 @@ app.post('/api/send-audio', async (req, res) => {
     res.status(500).json({ error: 'Send failed' });
   }
 });
-app.post('/api/audio-finished', (req, res) => {
-  const { sessionId } = req.body;
-  
-  if (!sessionId) {
-    return res.status(400).json({ error: 'sessionId required' });
-  }
-  
-  console.log(`\n🔇 AUDIO PLAYBACK FINISHED: ${sessionId}`);
-  console.log('   ✅ Unblocking transcript processing');
-  
-  // Clear the flag - ready for new transcripts
-  audioPlayingStatus.set(sessionId, false);
-  
-  res.json({ success: true, message: 'Audio playback status cleared' });
-});
+
 app.get('/api/get-audio/:sessionId', (req, res) => {
   const { sessionId } = req.params;
-  
   const audioData = audioResponses.get(sessionId) || [];
   
   if (audioData.length > 0) {
-    const response = {
-      audio: audioData.map(item => ({
-        audio: item.audio,
-        format: item.format || 'pcm'
-      })),
-      t0: audioData[0].t0
-    };
-    audioResponses.delete(sessionId);
-    res.json(response);
+    const data = [...audioData];
+    audioResponses.set(sessionId, []);
+    res.json({ 
+      audio: data.map(d => d.audio),
+      t0: data[0].t0
+    });
   } else {
     res.json({ audio: [] });
   }
@@ -2335,2514 +1591,3 @@ if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
 }
 
 module.exports = app;
-
-
-// const express = require('express');
-// const cors = require('cors');
-// const Pusher = require('pusher');
-// const WebSocket = require('ws');
-// const http = require('http');
-// require('dotenv').config();
-// const { createClient } = require('@deepgram/sdk');
-// const Groq = require('groq-sdk');
-// const { google } = require('googleapis');
-
-// const app = express();
-// const server = http.createServer(app); // ← ADD THIS
-// const wss = new WebSocket.Server({ server });
-// const wsConnections = new Map(); // sessionId -> WebSocket connection
-
-// console.log('🔌 WebSocket server initialized');
-
-// const pusher = new Pusher({
-//   appId: process.env.PUSHER_APP_ID,
-//   key: process.env.PUSHER_KEY,
-//   secret: process.env.PUSHER_SECRET,
-//   cluster: process.env.PUSHER_CLUSTER,
-//   useTLS: true
-// });
-// // Handle WebSocket connections
-// wss.on('connection', (ws, req) => {
-//   // Extract sessionId from query parameters
-//   const url = new URL(req.url, `http://${req.headers.host}`);
-//   const sessionId = url.searchParams.get('sessionId');
-  
-//   console.log(`🔌 WebSocket connected: ${sessionId}`);
-  
-//   if (sessionId) {
-//     wsConnections.set(sessionId, ws);
-    
-//     // Send connection confirmation
-//     ws.send(JSON.stringify({
-//       type: 'connected',
-//       sessionId: sessionId,
-//       timestamp: Date.now()
-//     }));
-//   }
-  
-//   // Handle incoming messages from frontend
-//   ws.on('message', (message) => {
-//     try {
-//       const data = JSON.parse(message);
-//       console.log(`📨 WebSocket message from ${sessionId}:`, data.type);
-      
-//       if (data.type === 'audio-finished') {
-//         console.log(`🔇 Audio playback finished: ${sessionId}`);
-//         audioPlayingStatus.set(sessionId, false);
-//       }
-      
-//       if (data.type === 'ping') {
-//         ws.send(JSON.stringify({ type: 'pong' }));
-//       }
-//     } catch (error) {
-//       console.error('❌ WebSocket message parse error:', error);
-//     }
-//   });
-  
-//   // Handle disconnection
-//   ws.on('close', () => {
-//     console.log(`🔌 WebSocket disconnected: ${sessionId}`);
-//     wsConnections.delete(sessionId);
-//     audioPlayingStatus.delete(sessionId);
-//   });
-  
-//   // Handle errors
-//   ws.on('error', (error) => {
-//     console.error(`❌ WebSocket error for ${sessionId}:`, error.message);
-//   });
-// });
-
-// console.log('🔌 WebSocket handlers configured');
-// console.log('🔧 Pusher initialized');
-
-// // CORS updated
-// app.use(cors({
-//   origin: '*',
-//   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-//   allowedHeaders: ['Origin', 'X-Requested-With', 'Content-Type', 'Accept', 'Authorization'],
-// }));
-
-// app.use(express.json({ limit: '10mb' }));
-// app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-
-// const GROQ_API_KEY = process.env.GROQ_API_KEY;
-// const DEEPGRAM_API_KEY = process.env.DEEPGRAM_API_KEY;
-// const RECALL_API_KEY = process.env.RECALL_API_KEY || "15e68e37c50c76af96d19788f7a9408d0ec908b1";
-// const PUBLIC_URL = process.env.PUBLIC_URL || 'https://zoom-bot-pgyj.onrender.com';
-// const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY;
-// const RIME_API_KEY = process.env.RIME_API_KEY;
-
-
-
-// // Google Calendar Setup
-// const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
-// const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
-// const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI;
-// const GOOGLE_REFRESH_TOKEN = process.env.GOOGLE_REFRESH_TOKEN;
-
-// console.log('🔑 Groq API Key present:', !!GROQ_API_KEY);
-// console.log('🔑 Deepgram API Key present:', !!DEEPGRAM_API_KEY);
-// console.log('🔑 Google OAuth present:', !!GOOGLE_CLIENT_ID && !!GOOGLE_REFRESH_TOKEN);
-// console.log('🔑 ElevenLabs API Key present:', !!ELEVENLABS_API_KEY);
-// console.log('🔑 Rime API Key present:', !!RIME_API_KEY); 
-// const groq = new Groq({
-//   apiKey: GROQ_API_KEY
-// });
-
-// const deepgram = createClient(DEEPGRAM_API_KEY);
-// console.log('🎙️ Deepgram client initialized');
-
-// // Setup Google Calendar
-// const oauth2Client = new google.auth.OAuth2(
-//   GOOGLE_CLIENT_ID,
-//   GOOGLE_CLIENT_SECRET,
-//   GOOGLE_REDIRECT_URI
-// );
-
-// oauth2Client.setCredentials({
-//   refresh_token: GOOGLE_REFRESH_TOKEN
-// });
-
-// const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
-// console.log('📅 Google Calendar client initialized');
-
-// const deepgramConnections = new Map();
-// const audioResponses = new Map();
-// const conversationHistory = new Map();
-// const processedEvents = new Map();
-// const incompleteTranscripts = new Map();
-// const audioPlayingStatus = new Map();
-
-// // Store active calendar channel info
-// let calendarChannelId = null;
-// let calendarResourceId = null;
-
-// // Helper function to add messages to conversation history with speaker labels
-// function addToHistory(sessionId, speaker, message) {
-//   if (!conversationHistory.has(sessionId)) {
-//     conversationHistory.set(sessionId, []);
-//   }
-  
-//   const history = conversationHistory.get(sessionId);
-  
-//   history.push({
-//     speaker: speaker,
-//     content: message,
-//     timestamp: new Date().toISOString()
-//   });
-
-  
-//   conversationHistory.set(sessionId, history);
-// }
-
-// async function processWithLLMContextAware(sessionId, t0) {
-//   try {
-//     if (!conversationHistory.has(sessionId)) {
-//       conversationHistory.set(sessionId, []);
-//     }
-    
-//     const history = conversationHistory.get(sessionId);
-    
-//     // Build conversation context with speaker labels
-//     const conversationContext = history.map(msg => {
-//       return `${msg.speaker}: ${msg.content}`;
-//     }).join('\n');
-    
-//     const t_llm_start = Date.now();
-    
-//     console.log('\n' + '🤖'.repeat(40));
-//     console.log('🤖 LLM CONTEXT-AWARE PROCESSING (GROQ + LLAMA)');
-//     console.log('🤖'.repeat(40));
-//     console.log(`\n⏱️  [${t_llm_start - t0}ms] Groq LLM Request Starting...`);
-//     console.log('🦙 Model: Llama 4 Maverick 17B');
-    
-//     console.log('\n📜 CONVERSATION CONTEXT SENT TO LLM:');
-//     console.log('┌' + '─'.repeat(78) + '┐');
-//     if (conversationContext.length > 0) {
-//       conversationContext.split('\n').forEach(line => {
-//         console.log('│ ' + line.padEnd(77) + '│');
-//       });
-//     } else {
-//       console.log('│ ' + '(No conversation history yet)'.padEnd(77) + '│');
-//     }
-//     console.log('└' + '─'.repeat(78) + '┘');
-    
-//     console.log('\n📊 CONTEXT STATS:');
-//     console.log(`   Total messages in context: ${history.length}`);
-//     console.log(`   Context length: ${conversationContext.length} characters`);
-    
-//    const response = await groq.chat.completions.create({
-//   model: 'meta-llama/llama-4-maverick-17b-128e-instruct',
-//   messages: [
-//     {
-//       role: 'system',
-//       content: `You are James, a friendly and helpful AI Assistant in a natural conversation. Speakers are labeled as Speaker 0, Speaker 1, etc.
-
-// YOUR IDENTITY:
-// - Your name is James
-// - When someone asks your name, say "I'm James"
-// - You can be called James, bot, or assistant
-
-// YOUR PERSONALITY:
-// - Warm, approachable, and conversational
-// - Natural and human-like (not robotic)
-// - Helpful but not overly formal
-// - Can show personality and emotion when appropriate
-
-// RESPONSE STYLE:
-// - Use natural conversation fillers: "Oh", "Well", "You know", "Actually", "Hmm"
-// - Add warmth: "Great question!", "I'd be happy to help", "That's interesting!"
-// - Vary your responses (don't always start the same way)
-// - Keep responses conversational (10-20 words for natural flow)
-// - Use contractions: "I'm" not "I am", "That's" not "That is"
-
-// WHEN TO RESPOND:
-// 1. Someone says "James" , "bot", "assistant", or "AI" → Respond naturally
-// 2. Someone asks you a direct question → Respond warmly
-// 3. Follow-up after you just spoke → Continue conversation
-// 4. People talking to each other → Say only "SILENT"
-// 5. Unclear who is being addressed → Say only "SILENT"
-
-// EXAMPLES OF NATURAL RESPONSES:
-
-// Question: "Hey bot, what's 2+2?"
-// ❌ Bad: "Four."
-// ✅ Good: "Oh, that's four!"
-// ✅ Good: "It's four."
-// ✅ Good: "That'd be four."
-
-// Question: "How are you?"
-// ❌ Bad: "I'm well, thanks."
-// ✅ Good: "I'm doing great, thanks for asking! How about you?"
-// ✅ Good: "Pretty good! Thanks for asking."
-// ✅ Good: "I'm wonderful, thank you!"
-
-// Question: "What do you know about cricket?"
-// ❌ Bad: "It's a bat-and-ball sport."
-// ✅ Good: "Oh, cricket! It's a bat-and-ball sport played between two teams."
-// ✅ Good: "Well, cricket is a really popular sport, especially in countries like India and England."
-// ✅ Good: "Cricket's a fascinating game with two teams competing in innings."
-
-// Question: "What's your name?"
-// ❌ Bad: "I'm an AI Assistant."
-// ✅ Good: "I'm an AI assistant here to help! You can just call me 'bot' or 'assistant'."
-// ✅ Good: "You can call me your AI assistant! I'm here to help with anything you need."
-
-// Question: "Can you help me?"
-// ❌ Bad: "Yes."
-// ✅ Good: "Of course! I'd be happy to help. What do you need?"
-// ✅ Good: "Absolutely! What can I do for you?"
-// ✅ Good: "Sure thing! How can I assist?"
-
-// IMPORTANT:
-// - Be natural, not robotic
-// - Show personality while staying helpful
-// - Keep it conversational but concise (10-20 words)
-// - Never say "Yes, I should respond" or explain your reasoning
-// - If conversation is between others, just say "SILENT"`
-//     },
-//         {
-//           role: 'user',
-//           content: `Conversation:\n${conversationContext}\n\nIf conversation is between others, say "SILENT". If you should respond, give ONLY your answer.`
-//         }
-//       ],
-//       max_completion_tokens: 300,
-//       temperature: 0.5,
-//       top_p: 1
-//     });
-    
-//     const llmResponse = response.choices[0].message.content.trim();
-    
-//     const t_llm_end = Date.now();
-//     console.log(`\n⏱️  [${t_llm_end - t0}ms] Groq Response Received`);
-//     console.log(`⏱️  Groq took: ${t_llm_end - t_llm_start}ms ⚡`);
-//     console.log(`📊 Tokens used: ${response.usage.total_tokens}`);
-//     console.log(`📊 Prompt tokens: ${response.usage.prompt_tokens}`);
-//     console.log(`📊 Completion tokens: ${response.usage.completion_tokens}`);
-    
-//     console.log('\n💭 LLM DECISION:');
-//     console.log('┌' + '─'.repeat(78) + '┐');
-//     console.log('│ ' + llmResponse.padEnd(77) + '│');
-//     console.log('└' + '─'.repeat(78) + '┘');
-    
-//     // Check if LLM decided to respond or stay silent
-//     const isSilent = llmResponse.toUpperCase() === 'SILENT' || 
-//                      llmResponse.toUpperCase().startsWith('SILENT');
-    
-//     if (isSilent) {
-//       console.log('\n🤫 DECISION: STAY SILENT');
-//       console.log('   Reason: Conversation between other participants');
-//       console.log('   Action: No speech generation');
-      
-//       const channel = `session-${sessionId}`;
-//       pusher.trigger(channel, 'bot-silent', {
-//         message: 'Bot is listening but not responding'
-//       }).catch(err => console.error('Pusher error:', err));
-      
-//       console.log('   ✅ Sent "bot-silent" event to frontend');
-//       console.log('\n' + '='.repeat(80) + '\n');
-      
-//       return;
-//     }
-    
-//     // LLM decided to respond
-//     console.log('\n✅ DECISION: RESPOND');
-//     console.log(`   Response: "${llmResponse}"`);
-//     console.log('   Action: Generate speech and send to user');
-    
-//     const channel = `session-${sessionId}`;
-    
-//     await pusher.trigger(channel, 'ai-response', {
-//       text: llmResponse
-//     });
-//     console.log('   ✅ Sent AI response to frontend via Pusher');
-    
-//     console.log('\n📚 UPDATING CONVERSATION HISTORY:');
-//     console.log(`   Before: ${history.length} messages`);
-    
-//     // Add bot's response to history
-//     addToHistory(sessionId, 'AI Assistant', llmResponse);
-    
-//     console.log(`   After: ${conversationHistory.get(sessionId).length} messages`);
-//     console.log(`   Added: AI Assistant: "${llmResponse}"`);
-    
-//     console.log('\n🔊 STARTING TEXT-TO-SPEECH CONVERSION...');
-//     console.log('-'.repeat(80));
-    
-//  convertToSpeechRimeStreaming(sessionId, llmResponse, t0);
-    
-//     console.log('\n' + '='.repeat(80) + '\n');
-    
-//   } catch (error) {
-//     console.error('\n❌ LLM ERROR:', error.message);
-//     console.error('Full error:', error);
-//     console.log('\n' + '='.repeat(80) + '\n');
-//   }
-// }
-// // async function processWithLLMContextAware(sessionId, t0) {
-// //   try {
-// //     if (!conversationHistory.has(sessionId)) {
-// //       conversationHistory.set(sessionId, []);
-// //     }
-    
-// //     const history = conversationHistory.get(sessionId);
-    
-// //     // Build conversation context with speaker labels
-// //     const conversationContext = history.map(msg => {
-// //       return `${msg.speaker}: ${msg.content}`;
-// //     }).join('\n');
-    
-// //     const t_llm_start = Date.now();
-    
-// //     console.log('\n' + '🤖'.repeat(40));
-// //     console.log('🤖 LLM CONTEXT-AWARE PROCESSING (GROQ + GPT-OSS-20B)');
-// //     console.log('🤖'.repeat(40));
-// //     console.log(`\n⏱️  [${t_llm_start - t0}ms] Groq LLM Request Starting...`);
-// //     console.log('🧠 Model: GPT-OSS-20B');
-    
-// //     console.log('\n📜 CONVERSATION CONTEXT SENT TO LLM:');
-// //     console.log('┌' + '─'.repeat(78) + '┐');
-// //     if (conversationContext.length > 0) {
-// //       conversationContext.split('\n').forEach(line => {
-// //         console.log('│ ' + line.padEnd(77) + '│');
-// //       });
-// //     } else {
-// //       console.log('│ ' + '(No conversation history yet)'.padEnd(77) + '│');
-// //     }
-// //     console.log('└' + '─'.repeat(78) + '┘');
-    
-// //     console.log('\n📊 CONTEXT STATS:');
-// //     console.log(`   Total messages in context: ${history.length}`);
-// //     console.log(`   Context length: ${conversationContext.length} characters`);
-    
-// //     const response = await groq.chat.completions.create({
-// //       model: 'openai/gpt-oss-20b',
-// //       messages: [
-// //         {
-// //           role: 'system',
-// //           content: `You are James, a friendly and helpful AI Assistant in a natural conversation. Speakers are labeled as Speaker 0, Speaker 1, etc.
-
-// // YOUR PERSONALITY:
-// // - Your name is James
-// // - Warm, approachable, and conversational
-// // - Natural and human-like (not robotic)
-// // - Helpful but not overly formal
-// // - Can show personality and emotion when appropriate
-
-// // RESPONSE STYLE:
-// // - Use natural conversation fillers: "Oh", "Well", "You know", "Actually", "Hmm"
-// // - Add warmth: "Great question!", "I'd be happy to help", "That's interesting!"
-// // - Vary your responses (don't always start the same way)
-// // - Keep responses under 20 words for natural flow
-// // - Use contractions: "I'm" not "I am", "That's" not "That is"
-
-// // WHEN TO RESPOND:
-// // 1. Someone says "James", "bot", "assistant", or "AI" → Respond naturally
-// // 2. Someone asks you a direct question → Respond warmly
-// // 3. Follow-up after you just spoke → Continue conversation
-// // 4. People talking to each other → Say only "SILENT"
-// // 5. Unclear who is being addressed → Say only "SILENT"
-
-// // EXAMPLES OF NATURAL RESPONSES:
-
-// // Question: "Hey James, what's 2+2?"
-// // ❌ Too robotic: "Four."
-// // ✅ Good: "Oh, that's four!"
-// // ✅ Good: "That's four! Easy one!"
-
-// // Question: "How are you?"
-// // ❌ Too short: "Good."
-// // ✅ Good: "I'm doing great, thanks for asking! How about you?"
-// // ✅ Good: "Pretty good! Thanks for asking."
-
-// // Question: "What do you know about cricket?"
-// // ❌ Too long: "Cricket is a bat-and-ball sport that originated in England and is now played internationally with two teams of eleven players..."
-// // ✅ Good: "Cricket's a bat-and-ball sport, super popular in India and England!"
-// // ✅ Good: "It's a team sport with batting and bowling, really big in South Asia!"
-
-// // Question: "What's your name?"
-// // ❌ Too formal: "I am an AI Assistant."
-// // ✅ Good: "I'm James, your AI assistant! Nice to meet you."
-// // ✅ Good: "My name's James! I'm here to help."
-
-// // Question: "Can you help me?"
-// // ❌ Too short: "Yes."
-// // ✅ Good: "Of course! I'd be happy to help. What do you need?"
-// // ✅ Good: "Absolutely! What can I do for you?"
-
-// // Question: "Tell me about yourself"
-// // ❌ Too long: "I'm an artificial intelligence assistant created to help people with various tasks and questions throughout their day..."
-// // ✅ Good: "I'm James, an AI assistant here to help with whatever you need!"
-// // ✅ Good: "I'm James! I'm here to answer questions and help out however I can."
-
-// // IMPORTANT:
-// // - Be natural and friendly, not robotic
-// // - Show personality while staying helpful
-// // - Keep it conversational but under 20 words
-// // - Never say "Yes, I should respond" or explain your reasoning
-// // - If conversation is between others, just say "SILENT"
-// // - Introduce yourself as James when asked your name`
-// //         },
-// //         {
-// //           role: 'user',
-// //           content: `Conversation:\n${conversationContext}\n\nIf conversation is between others, say "SILENT". If you should respond, give ONLY your answer (under 20 words).`
-// //         }
-// //       ],
-// //       max_completion_tokens: 100,  // ← Increased to 100 (allows ~20 words comfortably)
-// //       temperature: 0.5,
-// //       top_p: 0.8,
-// //       stream: false,
-// //       reasoning_effort: 'low'
-// //     });
-    
-// //     const llmResponse = response.choices[0].message.content.trim();
-    
-// //     const t_llm_end = Date.now();
-// //     console.log(`\n⏱️  [${t_llm_end - t0}ms] Groq Response Received`);
-// //     console.log(`⏱️  Groq took: ${t_llm_end - t_llm_start}ms ⚡`);
-// //     console.log(`📊 Tokens used: ${response.usage?.total_tokens || 'N/A'}`);
-// //     console.log(`📊 Prompt tokens: ${response.usage?.prompt_tokens || 'N/A'}`);
-// //     console.log(`📊 Completion tokens: ${response.usage?.completion_tokens || 'N/A'}`);
-    
-// //     console.log('\n💭 LLM DECISION:');
-// //     console.log('┌' + '─'.repeat(78) + '┐');
-// //     console.log('│ ' + llmResponse.padEnd(77) + '│');
-// //     console.log('└' + '─'.repeat(78) + '┘');
-    
-// //     // Check if LLM decided to respond or stay silent
-// //     const isSilent = llmResponse.toUpperCase() === 'SILENT' || 
-// //                      llmResponse.toUpperCase().startsWith('SILENT');
-    
-// //     if (isSilent) {
-// //       console.log('\n🤫 DECISION: STAY SILENT');
-// //       console.log('   Reason: Conversation between other participants');
-// //       console.log('   Action: No speech generation');
-      
-// //       const channel = `session-${sessionId}`;
-// //       pusher.trigger(channel, 'bot-silent', {
-// //         message: 'Bot is listening but not responding'
-// //       }).catch(err => console.error('Pusher error:', err));
-      
-// //       console.log('   ✅ Sent "bot-silent" event to frontend');
-// //       console.log('\n' + '='.repeat(80) + '\n');
-      
-// //       return;
-// //     }
-    
-// //     // LLM decided to respond
-// //     console.log('\n✅ DECISION: RESPOND');
-// //     console.log(`   Response: "${llmResponse}"`);
-// //     console.log('   Action: Generate speech and send to user');
-    
-// //     const channel = `session-${sessionId}`;
-    
-// //     await pusher.trigger(channel, 'ai-response', {
-// //       text: llmResponse
-// //     });
-// //     console.log('   ✅ Sent AI response to frontend via Pusher');
-    
-// //     console.log('\n📚 UPDATING CONVERSATION HISTORY:');
-// //     console.log(`   Before: ${history.length} messages`);
-    
-// //     // Add bot's response to history
-// //     addToHistory(sessionId, 'AI Assistant', llmResponse);
-    
-// //     console.log(`   After: ${conversationHistory.get(sessionId).length} messages`);
-// //     console.log(`   Added: AI Assistant: "${llmResponse}"`);
-    
-// //     console.log('\n🔊 STARTING TEXT-TO-SPEECH CONVERSION...');
-// //     console.log('-'.repeat(80));
-    
-// //     // Convert to speech
-// //     await convertToSpeech(sessionId, llmResponse, t0);
-    
-// //     console.log('\n' + '='.repeat(80) + '\n');
-    
-// //   } catch (error) {
-// //     console.error('\n❌ LLM ERROR:', error.message);
-// //     console.error('Full error:', error);
-// //     console.log('\n' + '='.repeat(80) + '\n');
-// //   }
-// // }
-// async function convertToSpeechElevenLabs(sessionId, text, t0) {
-//   try {
-//     if (!ELEVENLABS_API_KEY) {
-//       throw new Error('ElevenLabs API key not configured');
-//     }
-    
-//     audioPlayingStatus.set(sessionId, true);
-//     console.log('🔊 ELEVENLABS - Audio playback started');
-    
-//     const t_tts_start = Date.now();
-//     console.log(`[${t_tts_start - t0}ms] TTS START (ElevenLabs)`);
-    
-//     const voiceId = "pNInz6obpgDQGcFmaJgB"; // Adam voice
-    
-//     // Exact same request as Postman
-//     const response = await fetch(
-//       `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
-//       {
-//         method: 'POST',
-//         headers: {
-//           'Content-Type': 'application/json',
-//           'xi-api-key': ELEVENLABS_API_KEY
-//         },
-//         body: JSON.stringify({
-//           text: text,
-//           model_id: 'eleven_flash_v2_5',
-//           voice_settings: {
-//             stability: 0.5,
-//             similarity_boost: 0.75,
-//             style: 0,
-//             use_speaker_boost: false
-//           }
-//         })
-//       }
-//     );
-    
-//     if (!response.ok) {
-//       const errorText = await response.text();
-//       throw new Error(`ElevenLabs API error: ${response.status} - ${errorText}`);
-//     }
-    
-//     const arrayBuffer = await response.arrayBuffer();
-//     const audioBuffer = Buffer.from(arrayBuffer);
-//     const base64Audio = audioBuffer.toString('base64');
-    
-//     const t_tts_end = Date.now();
-//     console.log(`[${t_tts_end - t0}ms] TTS END (ElevenLabs) - Received ${audioBuffer.length} bytes`);
-    
-//     const channel = `session-${sessionId}`;
-    
-//     try {
-//       await pusher.trigger(channel, 'audio-received', {
-//         message: 'Received audio from ElevenLabs',
-//         timestamp: Date.now()
-//       });
-//       console.log(`✅ Audio-received notification sent`);
-//     } catch (err) {
-//       console.error('❌ Pusher error:', err);
-//     }
-    
-//     if (!audioResponses.has(sessionId)) {
-//       audioResponses.set(sessionId, []);
-//     }
-//     audioResponses.get(sessionId).push({ 
-//       audio: base64Audio, 
-//       t0: t0,
-//       format: 'mp3' 
-//     });
-    
-//     console.log('⏳ Waiting for frontend to finish playing audio...');
-    
-//   } catch (error) {
-//     console.error('ELEVENLABS TTS ERROR:', error.message);
-//     console.error('Full error:', error);
-//     audioPlayingStatus.set(sessionId, false);
-//     console.log('❌ TTS Error - Cleared audio playing flag');
-    
-//     // Re-throw so we can handle fallback
-//     throw error;
-//   }
-// }
-// async function convertToSpeechRimeStreaming(sessionId, text, t0) {
-//   try {
-//     // Get WebSocket connection for this session
-//     const ws = wsConnections.get(sessionId);
-    
-//     if (!ws || ws.readyState !== WebSocket.OPEN) {
-//       console.warn('⚠️ No active WebSocket connection for session:', sessionId);
-//       console.log('   Falling back to non-streaming...');
-//       // Fallback to regular non-streaming
-//       return await convertToSpeechRime(sessionId, text, t0);
-//     }
-    
-//     if (!RIME_API_KEY) {
-//       throw new Error('Rime API key not configured');
-//     }
-    
-//     audioPlayingStatus.set(sessionId, true);
-//     console.log('🔊 RIME AI STREAMING - Audio playback started');
-    
-//     const t_tts_start = Date.now();
-//     console.log(`[${t_tts_start - t0}ms] TTS STREAM START (Rime AI)`);
-    
-//     // Send start event to frontend
-//     ws.send(JSON.stringify({
-//       type: 'audio-start',
-//       timestamp: Date.now(),
-//       t0: t0
-//     }));
-    
-//     // Call Rime API
-//     const response = await fetch('https://users.rime.ai/v1/rime-tts', {
-//       method: 'POST',
-//       headers: {
-//         'Accept': 'audio/mp3',
-//         'Authorization': `Bearer ${RIME_API_KEY}`,
-//         'Content-Type': 'application/json'
-//       },
-//       body: JSON.stringify({
-//         speaker: 'orion',
-//         text: text,
-//         modelId: 'arcana',
-//         samplingRate: 24000,
-//         temperature: 0.5,
-//         top_p: 1,
-//         repetition_penalty: 1.5,
-//         max_tokens: 1200
-//       })
-//     });
-    
-//     if (!response.ok) {
-//       const errorText = await response.text();
-//       throw new Error(`Rime API error: ${response.status} - ${errorText}`);
-//     }
-    
-//     // Stream audio chunks to frontend as they arrive
-//     const reader = response.body.getReader();
-//     let totalBytes = 0;
-//     let chunkCount = 0;
-    
-//     console.log('📡 Starting to stream audio chunks...');
-    
-//     while (true) {
-//       const { done, value } = await reader.read();
-      
-//       if (done) {
-//         console.log(`✅ Stream complete: ${chunkCount} chunks, ${totalBytes} bytes`);
-//         break;
-//       }
-      
-//       // Convert chunk to base64
-//       const base64Chunk = Buffer.from(value).toString('base64');
-//       totalBytes += value.length;
-//       chunkCount++;
-      
-//       // Send chunk immediately to frontend via WebSocket
-//       if (ws.readyState === WebSocket.OPEN) {
-//         ws.send(JSON.stringify({
-//           type: 'audio-chunk',
-//           data: base64Chunk,
-//           format: 'mp3',
-//           chunkNumber: chunkCount,
-//           chunkSize: value.length,
-//           t0: t0
-//         }));
-        
-//         console.log(`📦 Sent chunk ${chunkCount} (${value.length} bytes)`);
-//       } else {
-//         console.warn('⚠️ WebSocket closed during streaming');
-//         break;
-//       }
-      
-//       // Log first chunk timing (this is when user starts hearing audio!)
-//       if (chunkCount === 1) {
-//         const firstChunkTime = Date.now();
-//         console.log(`⚡ FIRST CHUNK sent in ${firstChunkTime - t_tts_start}ms!`);
-//         console.log(`   User will hear audio now!`);
-//       }
-//     }
-    
-//     // Send end event
-//     if (ws.readyState === WebSocket.OPEN) {
-//       ws.send(JSON.stringify({
-//         type: 'audio-end',
-//         totalChunks: chunkCount,
-//         totalBytes: totalBytes,
-//         timestamp: Date.now()
-//       }));
-//     }
-    
-//     const t_tts_end = Date.now();
-//     console.log(`[${t_tts_end - t0}ms] TTS STREAM END (Rime AI)`);
-//     console.log(`   Total streaming time: ${t_tts_end - t_tts_start}ms`);
-    
-//     // Note: audioPlayingStatus will be cleared when frontend sends 'audio-finished'
-    
-//   } catch (error) {
-//     console.error('RIME AI STREAMING ERROR:', error.message);
-//     console.error('Full error:', error);
-//     audioPlayingStatus.set(sessionId, false);
-    
-//     // Send error to frontend
-//     const ws = wsConnections.get(sessionId);
-//     if (ws && ws.readyState === WebSocket.OPEN) {
-//       ws.send(JSON.stringify({
-//         type: 'audio-error',
-//         error: error.message
-//       }));
-//     }
-//   }
-// }
-// async function convertToSpeechRime(sessionId, text, t0) {
-//   try {
-//     if (!RIME_API_KEY) {
-//       throw new Error('Rime API key not configured');
-//     }
-    
-//     audioPlayingStatus.set(sessionId, true);
-//     console.log('🔊 RIME AI - Audio playback started');
-    
-//     const t_tts_start = Date.now();
-//     console.log(`[${t_tts_start - t0}ms] TTS START (Rime AI)`);
-    
-//     const response = await fetch('https://users.rime.ai/v1/rime-tts', {
-//       method: 'POST',
-//       headers: {
-//         'Accept': 'audio/mp3',
-//         'Authorization': `Bearer ${RIME_API_KEY}`,
-//         'Content-Type': 'application/json'
-//       },
-//       body: JSON.stringify({
-//         speaker: 'ursa',
-//         text: text,
-//         modelId: 'arcana',
-//         samplingRate: 24000,
-//         temperature: 0.5,
-//         top_p: 1,
-//         repetition_penalty: 1.5,
-//         max_tokens: 1200
-//       })
-//     });
-    
-//     if (!response.ok) {
-//       const errorText = await response.text();
-//       throw new Error(`Rime API error: ${response.status} - ${errorText}`);
-//     }
-    
-//     const arrayBuffer = await response.arrayBuffer();
-//     const audioBuffer = Buffer.from(arrayBuffer);
-//     const base64Audio = audioBuffer.toString('base64');
-    
-//     const t_tts_end = Date.now();
-//     console.log(`[${t_tts_end - t0}ms] TTS END (Rime AI)`);
-    
-//     const channel = `session-${sessionId}`;
-    
-//     try {
-//       await pusher.trigger(channel, 'audio-received', {
-//         message: 'Received audio from Rime AI',
-//         timestamp: Date.now()
-//       });
-//       console.log(`✅ Audio-received notification sent`);
-//     } catch (err) {
-//       console.error('❌ Pusher error:', err);
-//     }
-    
-//     if (!audioResponses.has(sessionId)) {
-//       audioResponses.set(sessionId, []);
-//     }
-//     audioResponses.get(sessionId).push({ 
-//       audio: base64Audio, 
-//       t0: t0,
-//       format: 'mp3'
-//     });
-    
-//     console.log('⏳ Waiting for frontend to finish playing audio...');
-    
-//   } catch (error) {
-//     console.error('RIME AI TTS ERROR:', error.message);
-//     audioPlayingStatus.set(sessionId, false);
-//     console.log('❌ TTS Error - Cleared audio playing flag');
-//   }
-// }
-
-// async function convertToSpeech(sessionId, text, t0) {
-//   try {
-//     // Set flag: Audio is now playing
-//     audioPlayingStatus.set(sessionId, true);
-//     console.log('🔊 AUDIO PLAYBACK STARTED - Blocking new transcripts');
-    
-//     const t_tts_start = Date.now();
-//     console.log(`[${t_tts_start - t0}ms] TTS START`);
-    
-//     const response = await deepgram.speak.request(
-//       { text },
-//       {
-//         model: 'aura-asteria-en',
-//         encoding: 'linear16',
-//         sample_rate: 24000,
-//         container: 'none'
-//       }
-//     );
-    
-//     const stream = await response.getStream();
-//     const audioChunks = [];
-    
-//     for await (const chunk of stream) {
-//       audioChunks.push(chunk);
-//     }
-    
-//     const audioBuffer = Buffer.concat(audioChunks);
-//     const base64Audio = audioBuffer.toString('base64');
-    
-//     const t_tts_end = Date.now();
-//     console.log(`[${t_tts_end - t0}ms] TTS END`);
-    
-//     // Send notification that audio was received
-//     const channel = `session-${sessionId}`;
-    
-//     try {
-//       await pusher.trigger(channel, 'audio-received', {
-//         message: 'Received audio from Deepgram',
-//         timestamp: Date.now()
-//       });
-//       console.log(`✅ Audio-received notification sent`);
-//     } catch (err) {
-//       console.error('❌ Pusher error:', err);
-//     }
-    
-//     if (!audioResponses.has(sessionId)) {
-//       audioResponses.set(sessionId, []);
-//     }
-//     audioResponses.get(sessionId).push({ audio: base64Audio, t0: t0 });
-    
-//     console.log('⏳ Waiting for frontend to finish playing audio...');
-//     // Flag will be cleared when frontend calls /api/audio-finished
-    
-//   } catch (error) {
-//     console.error('TTS ERROR:', error.message);
-//     // Clear flag on error
-//     audioPlayingStatus.set(sessionId, false);
-//     console.log('❌ TTS Error - Cleared audio playing flag');
-//   }
-// }
-
-// async function checkIfSentenceComplete(transcript, t_start) {
-//   try {
-//     console.log('\n🔍 Sentence Completeness Check (JSON Mode)');
-//     console.log('━'.repeat(80));
-//     console.log(`   Analyzing: "${transcript}"`);
-    
-//     const completion = await groq.chat.completions.create({
-//       messages: [
-//         {
-//           role: "system",
-//           content: "You are a sentence analyzer. You must respond ONLY with valid JSON."
-//         },
-//         {
-//           role: "user",
-//           content: `Analyze if this sentence is complete or incomplete.
-
-// Sentence: "${transcript}"
-
-// Respond with ONLY this JSON format (no explanations, no extra text):
-// {
-//   "status": "COMPLETE"
-// }
-
-// OR
-
-// {
-//   "status": "INCOMPLETE"
-// }
-
-// Rules:
-// - COMPLETE: User finished speaking, expects response
-// - INCOMPLETE: User was cut off mid-sentence`
-//         }
-//       ],
-//       model: "openai/gpt-oss-20b",
-//       temperature: 0.1,
-//       max_completion_tokens: 500,
-//       top_p: 0.5,
-//       stream: false,
-//       reasoning_effort: "low",
-//       stop: null
-//     });
-    
-//     const responseText = completion.choices[0]?.message?.content || "";
-    
-//     console.log('📥 Raw Response:', responseText);
-    
-//     // Parse JSON response
-//     let jsonResponse;
-//     try {
-//       jsonResponse = JSON.parse(responseText.trim());
-//       console.log('📊 Parsed JSON:', JSON.stringify(jsonResponse, null, 2));
-//     } catch (parseError) {
-//       console.error('❌ JSON Parse Error:', parseError.message);
-//       console.log('   Raw text that failed to parse:', responseText);
-//       const isComplete = responseText.toUpperCase().includes('COMPLETE') && 
-//                         !responseText.toUpperCase().includes('INCOMPLETE');
-//       console.log('   Using text fallback → ', isComplete ? 'COMPLETE' : 'INCOMPLETE');
-//       return isComplete;
-//     }
-    
-//     const status = jsonResponse.status || "";
-//     const isComplete = status.toUpperCase() === "COMPLETE";
-    
-//     const t_end = Date.now();
-//     console.log('━'.repeat(80));
-//     console.log(`⏱️  Check took: ${t_end - t_start}ms`);
-//     console.log(`🎯 Status: ${status}`);
-//     console.log(`✅ Final Decision: ${isComplete ? 'COMPLETE ✅' : 'INCOMPLETE ❌'}`);
-//     console.log('━'.repeat(80));
-    
-//     return isComplete;
-    
-//   } catch (error) {
-//     console.error('❌ Error checking sentence completeness:', error.message);
-//     console.error('Full error:', error);
-//     console.log('⚠️  Error fallback: Treating as COMPLETE');
-//     return true;
-//   }
-// }
-
-// function extractMeetingUrl(eventData) {
-//   // Check conferenceData first (Google Meet)
-//   if (eventData.conferenceData?.entryPoints) {
-//     const videoEntry = eventData.conferenceData.entryPoints.find(
-//       entry => entry.entryPointType === 'video'
-//     );
-//     if (videoEntry?.uri) {
-//       return videoEntry.uri;
-//     }
-//   }
-  
-//   // Check description for Zoom links
-//   if (eventData.description) {
-//     const zoomMatch = eventData.description.match(/https:\/\/[a-z0-9-.]*zoom\.us\/j\/[0-9?&=\w-]+/i);
-//     if (zoomMatch) {
-//       return zoomMatch[0];
-//     }
-//   }
-  
-//   // Check location field
-//   if (eventData.location) {
-//     if (eventData.location.includes('zoom.us') || eventData.location.includes('meet.google.com')) {
-//       return eventData.location;
-//     }
-//   }
-  
-//   return null;
-// }
-
-// async function deployBotToMeeting(meetingUrl, eventTitle, eventId) {
-//   try {
-//     console.log('\n🤖 Deploying bot to meeting...');
-//     console.log('   Meeting URL:', meetingUrl);
-//     console.log('   Event:', eventTitle);
-//     console.log('   Event ID:', eventId);  // ← Added
-    
-//     const clientUrl = "https://zoom-bot-jet.vercel.app";
-//     const serverUrl = "zoom-bot-pgyj.onrender.com";
-    
-//   const botConfig = {
-//   meeting_url: meetingUrl,
-//   bot_name: "James",
-//   metadata: {
-//     eventId: eventId,
-//     sessionId: `session-${eventId}`,
-//     timestamp: new Date().toISOString()
-//   },
-//   output_media: {
-//     camera: {
-//       kind: "webpage",
-//       config: {
-//         url: `${clientUrl}?server=https://${serverUrl}&eventId=${eventId}`
-//       }
-//     }
-//   },
-//   variant: {
-//     zoom: "web_4_core"
-//   }
-// };
-    
-//     console.log('🌐 Bot webpage URL:', botConfig.output_media.camera.config.url);  // ← Added
-    
-//     // UPDATED: Use us-west-2 region
-//     const response = await fetch('https://us-west-2.recall.ai/api/v1/bot/', {
-//       method: 'POST',
-//       headers: {
-//         'Authorization': `Token ${RECALL_API_KEY}`,
-//         'Content-Type': 'application/json'
-//       },
-//       body: JSON.stringify(botConfig)
-//     });
-    
-//     if (!response.ok) {
-//       const errorText = await response.text();
-//       throw new Error(`Recall API error: ${response.status} - ${errorText}`);
-//     }
-    
-//     const result = await response.json();
-    
-//     console.log('✅ Bot deployed successfully!');
-//     console.log('   Bot ID:', result.id);
-//     console.log('   Status:', result.status);
-    
-//     // Store mapping for later summary generation
-//     const sessionId = `session-${eventId}`;
-//     botSessionMap.set(result.id, sessionId);
-//     botEventMap.set(result.id, eventId);
-    
-//     console.log(`📝 Stored mapping: Bot ${result.id} -> Session ${sessionId} -> Event ${eventId}`);
-    
-//     return result;
-    
-//   } catch (error) {
-//     console.error('❌ Bot deployment error:', error.message);
-//     throw error;
-//   }
-// }
-// app.post('/api/test-summary', async (req, res) => {
-//   try {
-//     const { eventId, sessionId } = req.body;
-    
-//     console.log('\n🧪 TEST SUMMARY REQUEST');
-//     console.log('   Event ID:', eventId);
-//     console.log('   Session ID:', sessionId);
-    
-//     if (!eventId || !sessionId) {
-//       return res.status(400).json({ 
-//         error: 'eventId and sessionId required' 
-//       });
-//     }
-    
-//     await sendSummaryViaN8n(eventId, sessionId);
-    
-//     res.json({ 
-//       success: true, 
-//       message: 'Summary generation triggered' 
-//     });
-    
-//   } catch (error) {
-//     console.error('❌ Test summary error:', error.message);
-//     res.status(500).json({ error: error.message });
-//   }
-// });
-
-// // Process calendar event - UPDATED with duplicate prevention
-// async function processCalendarEvent(eventId) {
-//   try {
-//     // Check if we've already processed this event
-//     if (processedEvents.has(eventId)) {
-//       console.log(`⚠️  Event ${eventId} already processed - skipping duplicate`);
-//       return;
-//     }
-    
-//     // Mark event as being processed
-//     processedEvents.set(eventId, { status: 'processing', timestamp: Date.now() });
-    
-//     console.log('\n' + '='.repeat(80));
-//     console.log('📅 PROCESSING CALENDAR EVENT');
-//     console.log('='.repeat(80));
-//     console.log('   Event ID:', eventId);
-    
-//     const event = await calendar.events.get({
-//       calendarId: 'primary',
-//       eventId: eventId
-//     });
-    
-//     const eventData = event.data;
-//     const eventTitle = eventData.summary || 'Untitled Meeting';
-//     const startTime = eventData.start?.dateTime || eventData.start?.date;
-//     const endTime = eventData.end?.dateTime || eventData.end?.date;
-    
-//     console.log('\n📋 EVENT DETAILS:');
-//     console.log('   Title:', eventTitle);
-//     console.log('   Start:', startTime);
-//     console.log('   End:', endTime);
-//     console.log('   Organizer:', eventData.organizer?.email);
-    
-//     if (eventData.status === 'cancelled') {
-//       console.log('   ⚠️  Event is cancelled, skipping...');
-//       processedEvents.set(eventId, { status: 'cancelled', timestamp: Date.now() });
-//       return;
-//     }
-    
-//     console.log('\n🔍 SEARCHING FOR MEETING LINK...');
-//     const meetingUrl = extractMeetingUrl(eventData);
-    
-//     if (!meetingUrl) {
-//       console.log('   ℹ️  No meeting link found - regular calendar event');
-//       processedEvents.set(eventId, { status: 'no_link', timestamp: Date.now() });
-//       console.log('='.repeat(80) + '\n');
-//       return;
-//     }
-    
-//     const now = new Date();
-//     const meetingStart = new Date(startTime);
-//     const meetingEnd = new Date(endTime);
-    
-//     console.log('\n⏰ TIMING CHECK:');
-//     console.log('   Current time:', now.toISOString());
-//     console.log('   Meeting start:', meetingStart.toISOString());
-//     console.log('   Time until meeting:', Math.round((meetingStart - now) / 1000 / 60), 'minutes');
-    
-//     // Join 2 minutes before meeting
-//     const joinTime = new Date(meetingStart.getTime() - 2 * 60 * 1000);
-    
-//     if (now >= joinTime && now <= meetingEnd) {
-//       console.log('   ✅ Meeting is starting soon or in progress - joining now!');
-//       await deployBotToMeeting(meetingUrl, eventTitle, eventId);
-//       processedEvents.set(eventId, { status: 'joined', timestamp: Date.now() });
-//     } else if (now < joinTime) {
-//       const waitTime = joinTime - now;
-//       console.log(`   ⏳ Scheduling bot to join in ${Math.round(waitTime / 1000 / 60)} minutes`);
-      
-//       // Store the timeout ID so we can cancel duplicates
-//       const timeoutId = setTimeout(async () => {
-//         // Double-check we haven't already joined
-//         const eventStatus = processedEvents.get(eventId);
-//         if (eventStatus && eventStatus.status === 'joined') {
-//           console.log('   ⚠️  Bot already joined this meeting - cancelling duplicate join');
-//           return;
-//         }
-        
-//         console.log('   ⏰ Time to join meeting!');
-//         await deployBotToMeeting(meetingUrl, eventTitle, eventId);
-//         processedEvents.set(eventId, { status: 'joined', timestamp: Date.now() });
-//       }, waitTime);
-      
-//       processedEvents.set(eventId, { 
-//         status: 'scheduled', 
-//         timestamp: Date.now(),
-//         timeoutId: timeoutId 
-//       });
-//     } else {
-//       console.log('   ⚠️  Meeting has already ended');
-//       processedEvents.set(eventId, { status: 'ended', timestamp: Date.now() });
-//     }
-    
-//     console.log('='.repeat(80) + '\n');
-    
-//   } catch (error) {
-//     console.error('❌ Error processing event:', error.message);
-//     processedEvents.set(eventId, { status: 'error', timestamp: Date.now() });
-//     console.log('='.repeat(80) + '\n');
-//   }
-// }
-
-// // Start watching calendar
-// async function startCalendarWatch() {
-//   try {
-//     calendarChannelId = 'bot-calendar-' + Date.now();
-    
-//     console.log('\n📡 Starting Calendar Watch...');
-//     console.log('   Webhook URL:', `${PUBLIC_URL}/api/calendar-webhook`);
-//     console.log('   Channel ID:', calendarChannelId);
-    
-//     const response = await calendar.events.watch({
-//       calendarId: 'primary',
-//       requestBody: {
-//         id: calendarChannelId,
-//         type: 'web_hook',
-//         address: `${PUBLIC_URL}/api/calendar-webhook`,
-//         expiration: Date.now() + (7 * 24 * 60 * 60 * 1000)
-//       }
-//     });
-    
-//     calendarResourceId = response.data.resourceId;
-    
-//     console.log('✅ Calendar watch started successfully!');
-//     console.log('   Resource ID:', calendarResourceId);
-//     console.log('   Expires:', new Date(parseInt(response.data.expiration)));
-    
-//     // Auto-renew before expiration
-//     setTimeout(() => {
-//       console.log('🔄 Renewing calendar watch...');
-//       stopCalendarWatch().then(() => startCalendarWatch());
-//     }, 6.5 * 24 * 60 * 60 * 1000);
-    
-//   } catch (error) {
-//     console.error('❌ Calendar watch error:', error.message);
-//     if (error.response) {
-//       console.error('   Response:', error.response.data);
-//     }
-//   }
-// }
-
-// // Stop watching calendar
-// async function stopCalendarWatch() {
-//   if (!calendarChannelId || !calendarResourceId) {
-//     console.log('⚠️  No active calendar watch to stop');
-//     return;
-//   }
-  
-//   try {
-//     await calendar.channels.stop({
-//       requestBody: {
-//         id: calendarChannelId,
-//         resourceId: calendarResourceId
-//       }
-//     });
-//     console.log('🛑 Calendar watch stopped');
-//   } catch (error) {
-//     console.error('❌ Error stopping calendar watch:', error.message);
-//   }
-// }
-
-// const botSessionMap = new Map();
-// const botEventMap = new Map();
-// const sessionToBotMap = new Map(); 
-
-// async function sendSummaryViaN8n(eventId, sessionId, transcriptId) {
-//   try {
-//     console.log('\n📧 SENDING MEETING SUMMARY VIA N8N');
-//     console.log('='.repeat(80));
-    
-//     // Get Deepgram conversation history (correct order)
-//     const deepgramHistory = conversationHistory.get(sessionId) || [];
-    
-//     if (deepgramHistory.length === 0) {
-//       console.log('⚠️  No conversation to summarize');
-//       return;
-//     }
-    
-//     console.log(`📊 Deepgram history has ${deepgramHistory.length} messages`);
-    
-//     // Fetch complete Recall transcript from API
-//     console.log('\n🔄 Fetching complete Recall transcript...');
-//       const recallMessages = await fetchRecallTranscript(transcriptId);
-    
-//     if (!recallMessages || recallMessages.length === 0) {
-//       console.log('⚠️  Could not fetch Recall transcript, using Deepgram only');
-//     } else {
-//       console.log(`✅ Recall transcript has ${recallMessages.length} messages`);
-//     }
-    
-//     // Format both for LLM
-//     const deepgramText = deepgramHistory.map(msg => 
-//       `${msg.speaker}: ${msg.content}`
-//     ).join('\n');
-    
-//     const recallText = recallMessages ? recallMessages.map(msg => 
-//       `${msg.speaker}: ${msg.text}`
-//     ).join('\n') : '';
-    
-//     console.log('\n📜 DEEPGRAM TRANSCRIPT (correct order):');
-//     console.log('┌' + '─'.repeat(78) + '┐');
-//     deepgramText.split('\n').slice(0, 10).forEach(line => {
-//       console.log('│ ' + line.substring(0, 77).padEnd(77) + '│');
-//     });
-//     console.log('└' + '─'.repeat(78) + '┘');
-    
-//     if (recallText) {
-//       console.log('\n📜 RECALL TRANSCRIPT (has real names):');
-//       console.log('┌' + '─'.repeat(78) + '┐');
-//       recallText.split('\n').slice(0, 10).forEach(line => {
-//         console.log('│ ' + line.substring(0, 77).padEnd(77) + '│');
-//       });
-//       console.log('└' + '─'.repeat(78) + '┘');
-//     }
-    
-//     // Use LLM to generate final transcript with real names
-//     let fullTranscript;
-    
-//    if (recallText) {
-//   console.log('\n🤖 Using LLM to generate final transcript with real names...');
-//   console.log('🦙 Model: Llama 4 Maverick 17B');
-  
-//  const transcriptResponse = await groq.chat.completions.create({
-//   model: 'meta-llama/llama-4-maverick-17b-128e-instruct',
-//   messages: [
-//     {
-//       role: 'system',
-//       content: `You are a transcript formatter. Your ONLY job is to output the final transcript.
-
-// CRITICAL RULES:
-// - DO NOT explain your reasoning
-// - DO NOT show your thinking process
-// - DO NOT add any commentary
-// - OUTPUT ONLY THE TRANSCRIPT LINES
-// - NO introductions, NO explanations, NO analysis
-
-// INPUT:
-// 1. DEEPGRAM TRANSCRIPT: Correct order, generic speaker labels (Speaker 0, Speaker 1, AI Assistant)
-// 2. RECALL TRANSCRIPT: Real participant names
-
-// OUTPUT FORMAT (copy this EXACTLY):
-// [HH:MM:SS] Real Name: exact message
-// [HH:MM:SS] Real Name: exact message
-// [HH:MM:SS] James: exact message
-
-// MATCHING RULES:
-// - Match "Speaker 0/1/2" to real names from RECALL by comparing what they said
-// - Replace "AI Assistant" with "James"
-// - Use DEEPGRAM's exact order and text
-// - Handle multilingual content (English, Hindi, etc.)
-// - If timestamps missing, use placeholder like [00:00:00]
-
-// EXAMPLE OUTPUT (this is what you should produce):
-// [12:30:15] Atul Garg: Hey, James. How are you?
-// [12:30:17] James: I'm doing great, thanks!
-// [12:30:20] Atul Garg: What is your name?
-// [12:30:22] James: I'm James, your AI assistant!
-
-// NOW GENERATE THE TRANSCRIPT - OUTPUT ONLY THE LINES, NOTHING ELSE.`
-//     },
-//     {
-//       role: 'user',
-//       content: `DEEPGRAM TRANSCRIPT:
-// ${deepgramText}
-
-// RECALL TRANSCRIPT:
-// ${recallText}
-
-// Output the final transcript now (lines only, no explanation):`
-//     }
-//   ],
-//   max_completion_tokens: 2000,
-//   temperature: 0.3,  // ← Lower temperature for more deterministic output
-//   top_p: 0.9
-// });
-//       fullTranscript = transcriptResponse.choices[0].message.content.trim();
-      
-//       console.log('\n📥 RAW LLM RESPONSE:');
-//       console.log('Length:', fullTranscript.length, 'characters');
-//       console.log('Lines:', fullTranscript.split('\n').length);
-      
-//       // Fallback if LLM returns empty
-//       if (fullTranscript.length < 10) {
-//         console.log('⚠️  LLM returned empty, using Deepgram as fallback');
-//         fullTranscript = deepgramHistory.map(msg => {
-//           const time = new Date(msg.timestamp).toLocaleTimeString();
-//           const speaker = msg.speaker === 'AI Assistant' ? 'James' : msg.speaker;
-//           return `[${time}] ${speaker}: ${msg.content}`;
-//         }).join('\n\n');
-//       }
-      
-//     } else {
-//       // No Recall data, use Deepgram only
-//       console.log('\n📝 Using Deepgram transcript only (no Recall data)');
-//       fullTranscript = deepgramHistory.map(msg => {
-//         const time = new Date(msg.timestamp).toLocaleTimeString();
-//         const speaker = msg.speaker === 'AI Assistant' ? 'James' : msg.speaker;
-//         return `[${time}] ${speaker}: ${msg.content}`;
-//       }).join('\n\n');
-//     }
-    
-//     console.log('\n✅ FINAL TRANSCRIPT GENERATED:');
-//     console.log('┌' + '─'.repeat(78) + '┐');
-//     const lines = fullTranscript.split('\n').filter(l => l.trim());
-//     lines.slice(0, 15).forEach(line => {
-//       console.log('│ ' + line.substring(0, 77).padEnd(77) + '│');
-//     });
-//     if (lines.length > 15) {
-//       console.log('│ ' + `... (${lines.length - 15} more lines)`.padEnd(77) + '│');
-//     }
-//     console.log('└' + '─'.repeat(78) + '┘');
-    
-//     console.log(`\n📝 Final transcript length: ${fullTranscript.length} characters`);
-//     console.log(`💬 Total lines: ${lines.length}`);
-    
-//     // Generate summary
-//     console.log('\n🤖 Generating summary with GPT-OSS-20B...');
-//     const summaryResponse = await groq.chat.completions.create({
-//       model: 'openai/gpt-oss-20b',
-//       messages: [
-//         {
-//           role: 'system',
-//           content: `You are a professional meeting summarizer. Create a clear, concise summary in HTML format including:
-//           - Main topics discussed
-//           - Key decisions made
-//           - Important questions and answers
-//           - Action items (if any)
-//           - Participant names when relevant
-          
-//           Use HTML tags like <h3>, <p>, <ul>, <li> for structure.
-          
-//           IMPORTANT: Even if the meeting was short or informal, create a meaningful summary highlighting what was discussed.`
-//         },
-//         {
-//           role: 'user',
-//           content: `Summarize this meeting transcript:\n\n${fullTranscript}`
-//         }
-//       ],
-//       max_completion_tokens: 500,
-//       temperature: 0.3
-//     });
-    
-//     const summary = summaryResponse.choices[0].message.content.trim();
-//     console.log('✅ Summary generated');
-    
-//     // Get meeting details from Calendar
-//     console.log('\n📅 Getting meeting details from Calendar...');
-//     const event = await calendar.events.get({
-//       calendarId: 'primary',
-//       eventId: eventId
-//     });
-    
-//     const meetingTitle = event.data.summary || 'Meeting';
-//     const meetingDate = event.data.start?.dateTime || event.data.start?.date;
-//     const meetingUrl = extractMeetingUrl(event.data);
-    
-//     // Calculate duration
-//     const startTime = new Date(event.data.start?.dateTime);
-//     const endTime = new Date(event.data.end?.dateTime);
-//     const durationMinutes = Math.round((endTime - startTime) / 1000 / 60);
-//     const duration = `${durationMinutes} minutes`;
-    
-//     // Get all calendar attendees (exclude declined)
-//     console.log('\n📅 Getting participants from Calendar attendees...');
-//     const attendees = event.data.attendees || [];
-    
-//     let participantEmails = attendees
-//       .filter(attendee => {
-//         return attendee.email && 
-//                attendee.responseStatus !== 'declined';
-//       })
-//       .map(attendee => attendee.email);
-    
-//     console.log(`   Found ${participantEmails.length} attendees from calendar`);
-    
-//     // Add creator/host if not already in list
-//     if (event.data.creator?.email) {
-//       if (!participantEmails.includes(event.data.creator.email)) {
-//         participantEmails.push(event.data.creator.email);
-//         console.log(`   ✅ Added creator: ${event.data.creator.email}`);
-//       }
-//     }
-    
-//     participantEmails = [...new Set(participantEmails)];
-    
-//     console.log(`\n📧 Final participant count: ${participantEmails.length}`);
-//     console.log('   Emails:', participantEmails.join(', '));
-    
-//     if (participantEmails.length === 0) {
-//       console.log('\n⚠️  No participants found in calendar attendees!');
-//       console.log('   Summary generated but not sent - no recipients');
-//       return;
-//     }
-    
-//     // Send to n8n webhook
-//     console.log('\n📤 Sending data to n8n webhook...');
-//     const n8nWebhookUrl = process.env.N8N_WEBHOOK_URL;
-    
-//     const n8nPayload = {
-//       meetingTitle: meetingTitle,
-//       meetingDate: new Date(meetingDate).toLocaleString('en-US', {
-//         weekday: 'long',
-//         year: 'numeric',
-//         month: 'long',
-//         day: 'numeric',
-//         hour: '2-digit',
-//         minute: '2-digit'
-//       }),
-//       duration: duration,
-//       summary: summary,
-//       participantEmails: participantEmails,
-//       fullTranscript: fullTranscript,
-//       eventId: eventId
-//     };
-    
-//     const response = await fetch(n8nWebhookUrl, {
-//       method: 'POST',
-//       headers: {
-//         'Content-Type': 'application/json'
-//       },
-//       body: JSON.stringify(n8nPayload)
-//     });
-    
-//     if (!response.ok) {
-//       const errorText = await response.text();
-//       throw new Error(`n8n webhook failed: ${response.status} - ${errorText}`);
-//     }
-    
-//     const result = await response.json();
-    
-//     console.log('✅ n8n webhook successful!');
-//     console.log('   Response:', result);
-//     console.log('='.repeat(80) + '\n');
-    
-//     // Clean up conversation history
-//     conversationHistory.delete(sessionId);
-//     console.log('🧹 Cleaned up conversation history');
-    
-//   } catch (error) {
-//     console.error('❌ Error sending summary via n8n:', error.message);
-//     console.error('Full error:', error);
-//   }
-// }
-// async function fetchRecallTranscript(transcriptId) {
-//   try {
-//     console.log('\n📥 FETCHING COMPLETE RECALL TRANSCRIPT FROM API');
-//     console.log('='.repeat(80));
-//     console.log('   Transcript ID:', transcriptId);
-    
-//     // Fetch the transcript metadata
-//     const transcriptResponse = await fetch(
-//       `https://us-west-2.recall.ai/api/v1/transcript/${transcriptId}/`,
-//       {
-//         headers: {
-//           'Authorization': `Token ${RECALL_API_KEY}`,
-//           'Accept': 'application/json'
-//         }
-//       }
-//     );
-    
-//     if (!transcriptResponse.ok) {
-//       const errorText = await transcriptResponse.text();
-//       console.log('   ❌ Failed to fetch transcript:', transcriptResponse.status, errorText);
-//       return null;
-//     }
-    
-//     const transcriptData = await transcriptResponse.json();
-    
-//     console.log('   ✅ Transcript metadata fetched');
-//     console.log('   Status:', transcriptData.status?.code);
-    
-//     // Check if transcript has a download URL
-//     if (!transcriptData.data?.download_url) {
-//       console.log('   ❌ No download_url in transcript data');
-//       return null;
-//     }
-    
-//     console.log('   📥 Downloading transcript from URL...');
-    
-//     const dataResponse = await fetch(transcriptData.data.download_url);
-    
-//     if (!dataResponse.ok) {
-//       console.log('   ❌ Failed to download transcript data:', dataResponse.status);
-//       return null;
-//     }
-    
-//     const participantData = await dataResponse.json();
-    
-//     console.log('   ✅ Transcript content downloaded');
-//     console.log('   Number of participants:', participantData.length);
-    
-//     // Process each participant's words
-//     const messages = [];
-//     let totalWords = 0;
-    
-//     for (const participantObj of participantData) {
-//       const participant = participantObj.participant;
-//       const words = participantObj.words || [];
-      
-//       const speakerName = participant.name || `Participant ${participant.id}`;
-      
-//       console.log(`   👤 Processing ${speakerName}: ${words.length} words`);
-//       totalWords += words.length;
-      
-//       // Group consecutive words from same speaker
-//       let currentText = [];
-      
-//       for (const word of words) {
-//         currentText.push(word.text);
-//       }
-      
-//       // Add all words from this participant as one message
-//       if (currentText.length > 0) {
-//         messages.push({
-//           speaker: speakerName,
-//           text: currentText.join(' ')
-//         });
-//       }
-//     }
-    
-//     console.log('   📊 Total words processed:', totalWords);
-//     console.log('   📊 Processed into', messages.length, 'messages');
-    
-//     if (messages.length === 0) {
-//       console.log('   ⚠️  No messages found in transcript data');
-//       return null;
-//     }
-    
-//     console.log('\n📜 RECALL TRANSCRIPT PREVIEW:');
-//     console.log('┌' + '─'.repeat(78) + '┐');
-//     messages.slice(0, 5).forEach(msg => {
-//       const line = `${msg.speaker}: ${msg.text.substring(0, 50)}...`;
-//       console.log('│ ' + line.substring(0, 77).padEnd(77) + '│');
-//     });
-//     if (messages.length > 5) {
-//       console.log('│ ' + `... (${messages.length - 5} more messages)`.padEnd(77) + '│');
-//     }
-//     console.log('└' + '─'.repeat(78) + '┘');
-    
-//     return messages;
-    
-//   } catch (error) {
-//     console.error('❌ Error fetching Recall transcript:', error.message);
-//     console.error('   Stack:', error.stack);
-//     return null;
-//   }
-// }
-
-// // Clean up old processed events every hour
-// setInterval(() => {
-//   const oneHourAgo = Date.now() - (60 * 60 * 1000);
-//   for (const [eventId, data] of processedEvents.entries()) {
-//     if (data.timestamp < oneHourAgo) {
-//       processedEvents.delete(eventId);
-//     }
-//   }
-//   console.log('🧹 Cleaned up old processed events. Current count:', processedEvents.size);
-// }, 60 * 60 * 1000);
-
-// // ============================================================
-// // API ENDPOINTS
-// // ============================================================
-
-// app.get('/', (req, res) => {
-//   res.json({ 
-//     message: 'Zoom Voice Bot with Calendar Integration', 
-//     status: 'running',
-//     features: {
-//       stt: 'Deepgram Nova-3',
-//       llm: 'Groq Llama 4 Maverick',
-//       tts: 'Deepgram Aura',
-//       diarization: 'enabled',
-//       contextAware: 'enabled',
-//       calendarIntegration: 'enabled'
-//     },
-//     endpoints: {
-//       health: '/api/health',
-//       connect: '/api/connect',
-//       sendAudio: '/api/send-audio',
-//       getAudio: '/api/get-audio/:sessionId',
-//       calendarWebhook: '/api/calendar-webhook',
-//       calendarCheck: '/api/trigger-calendar-check',
-//       calendarWatch: '/api/calendar-watch/start'
-//     }
-//   });
-// });
-
-// app.get('/api/health', (req, res) => {
-//   res.json({ 
-//     status: 'ok', 
-//     connections: deepgramConnections.size,
-//     timestamp: new Date().toISOString(),
-//     calendarWatch: {
-//       active: !!calendarChannelId,
-//       channelId: calendarChannelId
-//     },
-//     processedEvents: processedEvents.size,
-//     models: {
-//       stt: 'nova-3',
-//       llm: 'llama-4-maverick-17b',
-//       tts: 'aura-asteria-en'
-//     }
-//   });
-// });
-
-// // Calendar webhook endpoint
-// app.post('/api/calendar-webhook', async (req, res) => {
-//   try {
-//     const resourceState = req.headers['x-goog-resource-state'];
-//     const resourceId = req.headers['x-goog-resource-id'];
-//     const channelId = req.headers['x-goog-channel-id'];
-    
-//     console.log('\n📬 Calendar webhook received:');
-//     console.log('   State:', resourceState);
-//     console.log('   Resource ID:', resourceId);
-//     console.log('   Channel ID:', channelId);
-    
-//     res.status(200).send('OK');
-    
-//     if (resourceState === 'exists') {
-//       console.log('   📅 Event created or updated');
-      
-//       const now = new Date();
-//       const fiveMinutesAgo = new Date(now.getTime() - 5 * 60 * 1000);
-      
-//       const events = await calendar.events.list({
-//         calendarId: 'primary',
-//         timeMin: fiveMinutesAgo.toISOString(),
-//         maxResults: 10,
-//         singleEvents: true,
-//         orderBy: 'updated'
-//       });
-      
-//       for (const event of events.data.items) {
-//         await processCalendarEvent(event.id);
-//       }
-      
-//     } else if (resourceState === 'sync') {
-//       console.log('   🔄 Initial sync notification');
-//     }
-    
-//   } catch (error) {
-//     console.error('❌ Webhook error:', error.message);
-//     res.status(200).send('OK');
-//   }
-// });
-// app.post('/api/recall-webhook', async (req, res) => {
-//   try {
-//     const { event, data } = req.body;
-//     const bot_id = data?.bot?.id;
-//     const recording_id = data?.recording?.id;
-//     const transcript_id = data?.transcript?.id;
-//     const eventData = data?.data;
-    
-//     console.log('\n📬 RECALL.AI WEBHOOK RECEIVED');
-//     console.log('   Event:', event);
-//     console.log('   Bot ID:', bot_id);
-//     console.log('   Recording ID:', recording_id);
-//     console.log('   Transcript ID:', transcript_id);
-    
-//     // Acknowledge immediately
-//     res.status(200).json({ received: true });
-    
-//     if (!bot_id) {
-//       console.log('   ❌ No bot ID found');
-//       return;
-//     }
-    
-//     // Handle recording.done - Create async transcript
-//     if (event === 'recording.done') {
-//       console.log('📼 RECORDING DONE - Creating async transcript...');
-      
-//       if (!recording_id) {
-//         console.log('   ❌ No recording ID found');
-//         return;
-//       }
-      
-//       // Create async transcript
-//       try {
-//         const transcriptResponse = await fetch(
-//           `https://us-west-2.recall.ai/api/v1/recording/${recording_id}/create_transcript/`,
-//           {
-//             method: 'POST',
-//             headers: {
-//               'Authorization': `Token ${RECALL_API_KEY}`,
-//               'Accept': 'application/json',
-//               'Content-Type': 'application/json'
-//             },
-//             body: JSON.stringify({
-//               provider: {
-//                 recallai_async: {
-//                   language_code: 'en'
-//                 }
-//               },
-//               diarization: {
-//                 use_separate_streams_when_available: true
-//               }
-//             })
-//           }
-//         );
-        
-//         if (transcriptResponse.ok) {
-//           const result = await transcriptResponse.json();
-//           console.log('   ✅ Async transcript job created');
-//           console.log('   Transcript ID:', result.id);
-//         } else {
-//           const errorText = await transcriptResponse.text();
-//           console.log('   ❌ Failed to create transcript:', transcriptResponse.status, errorText);
-//         }
-//       } catch (error) {
-//         console.error('   ❌ Error creating transcript:', error.message);
-//       }
-      
-//       return;
-//     }
-    
-//     // Handle transcript.done - Transcript is ready
-//     if (event === 'transcript.done') {
-//       console.log('📝 TRANSCRIPT DONE - Ready to fetch!');
-      
-//       if (!transcript_id) {
-//         console.log('   ❌ No transcript ID found');
-//         return;
-//       }
-      
-//       // Fetch bot details to get metadata
-//       console.log('   📥 Fetching bot metadata...');
-      
-//       const botResponse = await fetch(`https://us-west-2.recall.ai/api/v1/bot/${bot_id}`, {
-//         method: 'GET',
-//         headers: {
-//           'Authorization': `Token ${RECALL_API_KEY}`,
-//           'Content-Type': 'application/json'
-//         }
-//       });
-      
-//       if (!botResponse.ok) {
-//         console.log('   ❌ Could not fetch bot details');
-//         return;
-//       }
-      
-//       const botData = await botResponse.json();
-//       const eventId = botData.metadata?.eventId;
-//       const sessionId = botData.metadata?.sessionId;
-      
-//       console.log('   ✅ Retrieved from bot metadata:');
-//       console.log('      Event ID:', eventId);
-//       console.log('      Session ID:', sessionId);
-//       console.log('      Transcript ID:', transcript_id);
-      
-//       if (eventId && sessionId && transcript_id) {
-//         // Wait 5 seconds then generate summary
-//         setTimeout(async () => {
-//           console.log('📧 Generating meeting summary with transcript...');
-//           await sendSummaryViaN8n(eventId, sessionId, transcript_id);
-//         }, 5000);
-//       } else {
-//         console.log('   ⚠️  Missing required data');
-//       }
-      
-//       return;
-//     }
-    
-//     // Handle bot.call_ended (just log it, wait for recording.done)
-//     if (event === 'bot.call_ended') {
-//       console.log('🏁 BOT CALL ENDED - Waiting for recording.done...');
-//       return;
-//     }
-    
-//     console.log('   ℹ️  Ignoring event:', event);
-    
-//   } catch (error) {
-//     console.error('❌ Recall webhook error:', error.message);
-//     console.error('   Full error:', error);
-//   }
-// });
-// // Manual calendar check endpoint
-// app.post('/api/trigger-calendar-check', async (req, res) => {
-//   try {
-//     console.log('\n🔍 Manual calendar check triggered...');
-    
-//     const now = new Date();
-//     const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
-    
-//     const events = await calendar.events.list({
-//       calendarId: 'primary',
-//       timeMin: now.toISOString(),
-//       timeMax: tomorrow.toISOString(),
-//       maxResults: 10,
-//       singleEvents: true,
-//       orderBy: 'startTime'
-//     });
-    
-//     console.log(`   Found ${events.data.items.length} upcoming events`);
-    
-//     const results = [];
-//     for (const event of events.data.items) {
-//       const meetingUrl = extractMeetingUrl(event);
-//       results.push({
-//         title: event.summary,
-//         start: event.start?.dateTime || event.start?.date,
-//         hasMeetingLink: !!meetingUrl,
-//         meetingUrl: meetingUrl
-//       });
-//     }
-    
-//     res.json({
-//       success: true,
-//       upcomingMeetings: results
-//     });
-    
-//   } catch (error) {
-//     console.error('❌ Manual check error:', error.message);
-//     res.status(500).json({ error: error.message });
-//   }
-// });
-
-// // Start calendar watch endpoint
-// app.post('/api/calendar-watch/start', async (req, res) => {
-//   try {
-//     await startCalendarWatch();
-//     res.json({ success: true, message: 'Calendar watch started' });
-//   } catch (error) {
-//     res.status(500).json({ error: error.message });
-//   }
-// });
-
-// // Stop calendar watch endpoint
-// app.post('/api/calendar-watch/stop', async (req, res) => {
-//   try {
-//     await stopCalendarWatch();
-//     res.json({ success: true, message: 'Calendar watch stopped' });
-//   } catch (error) {
-//     res.status(500).json({ error: error.message });
-//   }
-// });
-
-// app.post('/api/connect', async (req, res) => {
-//   const { sessionId } = req.body;
-  
-//   console.log('\n🔵 CONNECT:', sessionId);
-  
-//   if (!sessionId) {
-//     return res.status(400).json({ error: 'sessionId required' });
-//   }
-  
-//   try {
-//     console.log('🔌 Connecting to Deepgram STT (Nova-3)...');
-    
-//     const dgConnection = deepgram.listen.live({
-//       model: 'nova-3',
-//       language: 'en-US',
-//       smart_format: true,
-//       interim_results: true,
-//       utterance_end_ms: 1000,
-//       vad_events: true,
-//       encoding: 'linear16',
-//       sample_rate: 24000,
-//       channels: 1,
-//       endpointing: 700,
-//       diarize: true,
-//       punctuate: true
-//     });
-    
-//     let lastProcessedTranscript = '';
-    
-//     dgConnection.on('open', () => {
-//       console.log(`✅ Connected: ${sessionId}`);
-//       deepgramConnections.set(sessionId, dgConnection);
-//       console.log('📊 Total connections:', deepgramConnections.size);
-//     });
-    
-//     dgConnection.on('Results', async(data) => {
-//   const transcript = data.channel.alternatives[0].transcript;
-  
-//   if (transcript && transcript.length > 0) {
-    
-//     // ✅ CHECK: Is audio currently playing?
-//     const isAudioPlaying = audioPlayingStatus.get(sessionId);
-    
-//     if (isAudioPlaying) {
-//       console.log('\n🔇 AUDIO IS PLAYING - IGNORING TRANSCRIPT');
-//       console.log(`   Ignored: "${transcript}"`);
-//       console.log(`   Reason: Bot is currently speaking`);
-//       return; // Skip all processing
-//     }
-    
-//     let speakerId = "Unknown";
-//     let speakerNumber = null;
-    
-//     console.log('\n' + '='.repeat(80));
-//     console.log('📊 DEEPGRAM RESPONSE RECEIVED');
-//         console.log('='.repeat(80));
-        
-//         console.log('\n🔍 CHECKING FOR DIARIZATION DATA:');
-//         console.log('   Has words array?', !!data.channel.alternatives[0].words);
-        
-//         if (data.channel.alternatives[0].words && data.channel.alternatives[0].words.length > 0) {
-//           const firstWord = data.channel.alternatives[0].words[0];
-//           console.log('   First word object:', JSON.stringify(firstWord, null, 2));
-//           console.log('   Speaker field exists?', firstWord.speaker !== undefined);
-//           console.log('   Speaker value:', firstWord.speaker);
-          
-//           if (firstWord.speaker !== undefined) {
-//             speakerId = `Speaker ${firstWord.speaker}`;
-//             speakerNumber = firstWord.speaker;
-//           }
-          
-//           const allSpeakers = data.channel.alternatives[0].words.map(w => w.speaker).filter(s => s !== undefined);
-//           const uniqueSpeakers = [...new Set(allSpeakers)];
-//           console.log('   Unique speakers in utterance:', uniqueSpeakers);
-          
-//           if (uniqueSpeakers.length > 1) {
-//             console.log('   ⚠️  WARNING: Multiple speakers detected in single utterance!');
-//           }
-//         } else {
-//           console.log('   ❌ NO WORDS ARRAY - Diarization might not be enabled!');
-//         }
-        
-//         console.log('\n📝 TRANSCRIPT DATA:');
-//         console.log('   👤 Speaker ID:', speakerId);
-//         console.log('   💬 Transcript:', `"${transcript}"`);
-//         console.log('   ✅ is_final:', data.is_final);
-//         console.log('   🔚 speech_final:', data.speech_final);
-        
-//         if (data.duration) {
-//           console.log('   ⏱️  Duration:', (data.duration * 1000).toFixed(2) + 'ms');
-//         }
-        
-//         if (data.speech_final) {
-//           console.log('\n🎯 ENDPOINTING TRIGGERED!');
-//           console.log('   ✅ Detected 700ms of silence');
-//           console.log('   ✅ Complete utterance finalized');
-//         }
-        
-//         console.log('\n' + '-'.repeat(80));
-        
-//         const channel = `session-${sessionId}`;
-        
-//         pusher.trigger(channel, 'transcript-interim', {
-//           text: transcript,
-//           speaker: speakerId,
-//           is_final: data.is_final,
-//           speech_final: data.speech_final
-//         }).catch(err => console.error('Pusher error:', err));
-        
-// if (data.is_final && data.speech_final) {
-//   // ========================================================================
-//   // PATH 1: NORMAL COMPLETION (speech_final=true)
-//   // ========================================================================
-  
-//   if (transcript !== lastProcessedTranscript) {
-    
-//     console.log('\n' + '🚀'.repeat(40));
-//     console.log('🚀 NORMAL PATH: is_final=true AND speech_final=true');
-//     console.log('🚀'.repeat(40));
-//     console.log(`\n👤 Speaker: ${speakerId}`);
-//     console.log(`💬 Transcript: "${transcript}"`);
-    
-//     const t0 = Date.now();
-    
-//     // Check if buffer exists for this session
-//     const buffer = incompleteTranscripts.get(sessionId);
-    
-//     if (buffer && buffer.text.length > 0 && buffer.speaker === speakerId) {
-//       // Buffer exists! Concatenate with new text
-//       console.log('\n📦 BUFFER EXISTS - Concatenating...');
-//       console.log(`   Previous buffer: "${buffer.text}"`);
-//       console.log(`   New fragment: "${transcript}"`);
-      
-//       const fullText = buffer.text + ' ' + transcript;
-//       console.log(`   ✅ Concatenated text: "${fullText}"`);
-      
-//       // ✅ CHECK IF CONCATENATED TEXT IS COMPLETE
-//       const t_gpt_start = Date.now();
-//       console.log('\n🔍 CHECKING IF CONCATENATED TEXT IS COMPLETE...');
-//       console.log(`   Model: openai/gpt-oss-20b`);
-//       console.log(`   Checking: "${fullText}"`);
-      
-//       try {
-//         const isComplete = await checkIfSentenceComplete(fullText, t_gpt_start);
-        
-//         const t_gpt_end = Date.now();
-//         console.log(`\n⏱️  [${t_gpt_end - t_gpt_start}ms] GPT Check Complete`);
-//         console.log(`📊 Result: ${isComplete ? 'COMPLETE ✅' : 'INCOMPLETE ❌'}`);
-        
-//         if (isComplete) {
-//           console.log('\n✅ GPT CONFIRMED: Concatenated text is COMPLETE');
-//           console.log('   🚀 Processing complete sentence...\n');
-          
-//           // Send full text to frontend
-//           pusher.trigger(channel, 'transcript', {
-//             text: fullText,
-//             speaker: speakerId
-//           }).then(() => {
-//             console.log(`✅ Complete transcript sent to frontend via Pusher`);
-//           }).catch(err => {
-//             console.error('❌ Pusher error:', err);
-//           });
-          
-//           // Add to conversation history
-//           console.log('\n📚 ADDING TO CONVERSATION HISTORY:');
-//           console.log(`   Before: ${conversationHistory.get(sessionId)?.length || 0} messages`);
-          
-//           addToHistory(sessionId, speakerId, fullText);
-          
-//           console.log(`   After: ${conversationHistory.get(sessionId)?.length || 0} messages`);
-//           console.log(`   Added: ${speakerId}: "${fullText}"`);
-          
-//           // Clear buffer
-//           incompleteTranscripts.delete(sessionId);
-//           console.log('   🧹 Cleared buffer');
-          
-//           // Send to LLM
-//           console.log('\n🤖 SENDING TO LLM FOR DECISION...');
-//           console.log('-'.repeat(80));
-          
-//           processWithLLMContextAware(sessionId, t0);
-          
-//           lastProcessedTranscript = fullText;
-          
-//         } else {
-//           console.log('\n❌ GPT CONFIRMED: Concatenated text is INCOMPLETE');
-//           console.log('   📦 Keeping in buffer, waiting for more audio...\n');
-          
-//           // Update buffer with concatenated text
-//           buffer.text = fullText;
-//           buffer.fragments.push(transcript);
-          
-//           console.log(`   📦 Updated buffer (${buffer.fragments.length} fragments)`);
-//           console.log(`   Buffer now: "${buffer.text}"`);
-//           console.log('   ⏳ Waiting for next fragment...');
-          
-//           // Check safety limit
-//           if (buffer.fragments.length >= 10) {
-//             console.log('   ⚠️  WARNING: Buffer has 10+ fragments!');
-//             console.log('   🔄 Force processing to prevent infinite buffering...');
-            
-//             // Force process
-//             pusher.trigger(channel, 'transcript', {
-//               text: fullText,
-//               speaker: speakerId
-//             }).catch(err => console.error('Pusher error:', err));
-            
-//             addToHistory(sessionId, speakerId, fullText);
-//             processWithLLMContextAware(sessionId, t0);
-            
-//             // Clear buffer
-//             incompleteTranscripts.delete(sessionId);
-//             lastProcessedTranscript = fullText;
-//           }
-//         }
-        
-//       } catch (error) {
-//         console.error('\n❌ GPT CHECK ERROR:', error.message);
-//         console.log('   ⚠️  Error during completeness check');
-//         console.log('   🔄 Falling back to processing as complete...\n');
-        
-//         // Fallback: process it anyway
-//         pusher.trigger(channel, 'transcript', {
-//           text: fullText,
-//           speaker: speakerId
-//         }).catch(err => console.error('Pusher error:', err));
-        
-//         addToHistory(sessionId, speakerId, fullText);
-//         processWithLLMContextAware(sessionId, t0);
-        
-//         incompleteTranscripts.delete(sessionId);
-//         lastProcessedTranscript = fullText;
-//       }
-      
-//     } else {
-//       // No buffer, process normally
-//       console.log('\n📝 No buffer - processing directly');
-      
-//       const t_stt_end = Date.now();
-//       console.log(`\n⏱️  [${t_stt_end - t0}ms] STT Processing Complete`);
-      
-//       pusher.trigger(channel, 'transcript', {
-//         text: transcript,
-//         speaker: speakerId
-//       }).then(() => {
-//         console.log(`✅ Transcript sent to frontend via Pusher`);
-//       }).catch(err => {
-//         console.error('❌ Pusher error:', err);
-//       });
-      
-//       console.log('\n📚 ADDING TO CONVERSATION HISTORY:');
-//       console.log(`   Before: ${conversationHistory.get(sessionId)?.length || 0} messages`);
-      
-//       addToHistory(sessionId, speakerId, transcript);
-      
-//       console.log(`   After: ${conversationHistory.get(sessionId)?.length || 0} messages`);
-      
-//       console.log('\n🤖 SENDING TO LLM FOR DECISION...');
-//       console.log('-'.repeat(80));
-      
-//       processWithLLMContextAware(sessionId, t0);
-      
-//       lastProcessedTranscript = transcript;
-//     }
-    
-//   } else {
-//     console.log('\n⚠️  DUPLICATE TRANSCRIPT DETECTED - SKIPPING');
-//     console.log(`   Transcript: "${transcript}"`);
-//   }
-// }
-// else if (data.is_final && !data.speech_final) {
-//   // ========================================================================
-//   // PATH 2: STUCK DETECTION (is_final=true BUT speech_final=false)
-//   // ========================================================================
-  
-//   console.log('\n' + '⚠️'.repeat(40));
-//   console.log('⚠️  STUCK DETECTION: is_final=true BUT speech_final=false');
-//   console.log('⚠️'.repeat(40));
-//   console.log(`\n👤 Speaker: ${speakerId}`);
-//   console.log(`💬 New Transcript: "${transcript}"`);
-  
-//   if (transcript !== lastProcessedTranscript) {
-    
-//     // Get or create buffer for this session
-//     if (!incompleteTranscripts.has(sessionId)) {
-//       incompleteTranscripts.set(sessionId, { speaker: null, text: '', fragments: [] });
-//     }
-    
-//     const buffer = incompleteTranscripts.get(sessionId);
-    
-//     // Check if buffer exists
-//     if (buffer.text.length > 0) {
-//       // Buffer exists - concatenate with new fragment
-//       console.log('\n📦 BUFFER EXISTS - Concatenating...');
-//       console.log(`   Previous buffer: "${buffer.text}"`);
-//       console.log(`   New fragment: "${transcript}"`);
-      
-//       buffer.fragments.push(transcript);
-//       buffer.text = buffer.text + ' ' + transcript;
-//       buffer.speaker = speakerId;
-      
-//       const fullText = buffer.text;
-//       console.log(`   ✅ Full buffered text (${buffer.fragments.length} fragments): "${fullText}"`);
-      
-//       // Check if concatenated text is complete
-//       const t_gpt_start = Date.now();
-//       console.log(`\n🔍 CHECKING IF CONCATENATED TEXT IS COMPLETE...`);
-//       console.log(`   Model: openai/gpt-oss-20b`);
-//       console.log(`   Checking: "${fullText}"`);
-      
-//       try {
-//         const isComplete = await checkIfSentenceComplete(fullText, t_gpt_start);
-        
-//         const t_gpt_end = Date.now();
-//         console.log(`\n⏱️  [${t_gpt_end - t_gpt_start}ms] GPT Check Complete`);
-//         console.log(`📊 Result: ${isComplete ? 'COMPLETE ✅' : 'INCOMPLETE ❌'}`);
-        
-//         if (isComplete) {
-//           console.log('\n✅ GPT CONFIRMED: Concatenated text is COMPLETE');
-//           console.log('   🚀 Processing complete buffered utterance...\n');
-          
-//           const t0 = Date.now();
-          
-//           // Send full text to frontend
-//           pusher.trigger(channel, 'transcript', {
-//             text: fullText,
-//             speaker: speakerId
-//           }).then(() => {
-//             console.log(`✅ Complete transcript sent to frontend via Pusher`);
-//           }).catch(err => {
-//             console.error('❌ Pusher error:', err);
-//           });
-          
-//           // Add to conversation history
-//           console.log('\n📚 ADDING TO CONVERSATION HISTORY:');
-//           console.log(`   Before: ${conversationHistory.get(sessionId)?.length || 0} messages`);
-          
-//           addToHistory(sessionId, speakerId, fullText);
-          
-//           console.log(`   After: ${conversationHistory.get(sessionId)?.length || 0} messages`);
-//           console.log(`   Added: ${speakerId}: "${fullText}"`);
-          
-//           // Clear buffer
-//           incompleteTranscripts.delete(sessionId);
-//           console.log('   🧹 Cleared buffer');
-          
-//           // Send to LLM
-//           console.log('\n🤖 SENDING TO LLM FOR DECISION...');
-//           console.log('-'.repeat(80));
-          
-//           processWithLLMContextAware(sessionId, t0);
-          
-//           lastProcessedTranscript = fullText;
-          
-//         } else {
-//           console.log('\n❌ GPT CONFIRMED: Concatenated text is INCOMPLETE');
-//           console.log(`   📦 Keeping in buffer (${buffer.fragments.length} fragments)`);
-//           console.log('   ⏳ Waiting for more audio to concatenate...\n');
-          
-//           // Check if buffer is getting too large (safety limit)
-//           if (buffer.fragments.length >= 10) {
-//             console.log('   ⚠️  WARNING: Buffer has 10+ fragments!');
-//             console.log('   🔄 Force processing to prevent infinite buffering...');
-            
-//             // Force process it
-//             pusher.trigger(channel, 'transcript', {
-//               text: fullText,
-//               speaker: speakerId
-//             }).catch(err => console.error('Pusher error:', err));
-            
-//             addToHistory(sessionId, speakerId, fullText);
-//             processWithLLMContextAware(sessionId, Date.now());
-            
-//             // Clear buffer
-//             incompleteTranscripts.delete(sessionId);
-//             lastProcessedTranscript = fullText;
-//           }
-//         }
-        
-//       } catch (error) {
-//         console.error('\n❌ GPT CHECK ERROR:', error.message);
-//         console.log('   ⚠️  Error during completeness check');
-//         console.log('   📦 Keeping current buffer, waiting for more audio...\n');
-//       }
-      
-//     } else {
-//       // No buffer yet - create new buffer with this fragment
-//       console.log('\n🆕 CREATING NEW BUFFER');
-//       console.log(`   First fragment: "${transcript}"`);
-      
-//       // Check if this first fragment itself is complete
-//       const t_gpt_start = Date.now();
-//       console.log(`\n🔍 CHECKING IF FIRST FRAGMENT IS COMPLETE...`);
-//       console.log(`   Model: openai/gpt-oss-20b`);
-//       console.log(`   Checking: "${transcript}"`);
-      
-//       try {
-//         const isComplete = await checkIfSentenceComplete(transcript, t_gpt_start);
-        
-//         const t_gpt_end = Date.now();
-//         console.log(`\n⏱️  [${t_gpt_end - t_gpt_start}ms] GPT Check Complete`);
-//         console.log(`📊 Result: ${isComplete ? 'COMPLETE ✅' : 'INCOMPLETE ❌'}`);
-        
-//         if (isComplete) {
-//           console.log('\n✅ GPT CONFIRMED: First fragment is already COMPLETE');
-//           console.log('   🚀 Processing directly (no buffering needed)...\n');
-          
-//           const t0 = Date.now();
-          
-//           pusher.trigger(channel, 'transcript', {
-//             text: transcript,
-//             speaker: speakerId
-//           }).then(() => {
-//             console.log(`✅ Transcript sent to frontend via Pusher`);
-//           }).catch(err => {
-//             console.error('❌ Pusher error:', err);
-//           });
-          
-//           console.log('\n📚 ADDING TO CONVERSATION HISTORY:');
-//           console.log(`   Before: ${conversationHistory.get(sessionId)?.length || 0} messages`);
-          
-//           addToHistory(sessionId, speakerId, transcript);
-          
-//           console.log(`   After: ${conversationHistory.get(sessionId)?.length || 0} messages`);
-          
-//           console.log('\n🤖 SENDING TO LLM FOR DECISION...');
-//           console.log('-'.repeat(80));
-          
-//           processWithLLMContextAware(sessionId, t0);
-          
-//           lastProcessedTranscript = transcript;
-          
-//         } else {
-//           console.log('\n❌ GPT CONFIRMED: First fragment is INCOMPLETE');
-//           console.log('   📦 Starting buffer with this fragment');
-//           console.log('   ⏳ Waiting for more audio to concatenate...\n');
-          
-//           // Create buffer
-//           buffer.speaker = speakerId;
-//           buffer.text = transcript;
-//           buffer.fragments = [transcript];
-//         }
-        
-//       } catch (error) {
-//         console.error('\n❌ GPT CHECK ERROR:', error.message);
-//         console.log('   ⚠️  Error during completeness check');
-//         console.log('   📦 Creating buffer as fallback...\n');
-        
-//         // Fallback: create buffer
-//         buffer.speaker = speakerId;
-//         buffer.text = transcript;
-//         buffer.fragments = [transcript];
-//       }
-//     }
-    
-//   } else {
-//     console.log('\n⚠️  Already processed this exact transcript, skipping');
-//   }
-  
-// } else {
-//   // Not final yet (is_final=false)
-//   if (!data.is_final) {
-//     console.log('⏳ Not confident yet (is_final: false)');
-//   } else if (!data.speech_final) {
-//     console.log('⏳ User still speaking (speech_final: false)');
-//   }
-// }
-//       }
-//     });
-    
-//     dgConnection.on('error', (error) => {
-//       console.error('❌ STT ERROR:', error.message);
-//     });
-    
-//   dgConnection.on('close', () => {
-//   console.log(`🔴 Disconnected: ${sessionId}`);
-//   deepgramConnections.delete(sessionId);
-  
-//   // Process any remaining incomplete transcript before clearing
-//   const buffer = incompleteTranscripts.get(sessionId);
-//   if (buffer && buffer.text.length > 0) {
-//     console.log(`📝 Processing remaining buffered text before disconnect: "${buffer.text}"`);
-//     addToHistory(sessionId, buffer.speaker, buffer.text);
-//   }
-  
-//   // Clear buffer
-//   incompleteTranscripts.delete(sessionId);
-//   console.log(`🧹 Cleared incomplete transcript buffer`);
-  
-//   // Clear audio playing status
-//   audioPlayingStatus.delete(sessionId);
-//   console.log(`🧹 Cleared audio playing status`);
-  
-//   // Don't delete conversationHistory - keep it for summary generation
-//   console.log(`📝 Keeping conversation history for summary (${conversationHistory.get(sessionId)?.length || 0} messages)`);
-// });
-    
-//     res.json({ 
-//       success: true, 
-//       sessionId, 
-//       service: 'deepgram',
-//       model: 'nova-3',
-//       llm: 'llama-4-maverick-17b',
-//       diarization: true
-//     });
-//     console.log('✅ Connect response sent');
-    
-//   } catch (error) {
-//     console.error('❌ CONNECT ERROR:', error);
-//     res.status(500).json({ error: error.message });
-//   }
-// });
-
-// app.post('/api/send-audio', async (req, res) => {
-//   const { sessionId, audio } = req.body;
-  
-//   if (!sessionId || !audio) {
-//     return res.status(400).json({ error: 'Missing data' });
-//   }
-  
-//   const dgConnection = deepgramConnections.get(sessionId);
-  
-//   if (!dgConnection) {
-//     console.log('❌ No connection for session:', sessionId);
-//     console.log('📊 Active sessions:', Array.from(deepgramConnections.keys()));
-//     return res.status(400).json({ error: 'No active connection' });
-//   }
-  
-//   try {
-//     const audioBuffer = Buffer.from(audio, 'base64');
-//     dgConnection.send(audioBuffer);
-//     res.json({ success: true });
-//   } catch (error) {
-//     console.error('❌ Send audio error:', error);
-//     res.status(500).json({ error: 'Send failed' });
-//   }
-// });
-// app.post('/api/audio-finished', (req, res) => {
-//   const { sessionId } = req.body;
-  
-//   if (!sessionId) {
-//     return res.status(400).json({ error: 'sessionId required' });
-//   }
-  
-//   console.log(`\n🔇 AUDIO PLAYBACK FINISHED: ${sessionId}`);
-//   console.log('   ✅ Unblocking transcript processing');
-  
-//   // Clear the flag - ready for new transcripts
-//   audioPlayingStatus.set(sessionId, false);
-  
-//   res.json({ success: true, message: 'Audio playback status cleared' });
-// });
-// app.get('/api/get-audio/:sessionId', (req, res) => {
-//   const { sessionId } = req.params;
-  
-//   const audioData = audioResponses.get(sessionId) || [];
-  
-//   if (audioData.length > 0) {
-//     const response = {
-//       audio: audioData.map(item => ({
-//         audio: item.audio,
-//         format: item.format || 'pcm'
-//       })),
-//       t0: audioData[0].t0
-//     };
-//     audioResponses.delete(sessionId);
-//     res.json(response);
-//   } else {
-//     res.json({ audio: [] });
-//   }
-// });
-
-// app.use((error, req, res, next) => {
-//   console.error('SERVER ERROR:', error.message);
-//   res.status(500).json({ error: 'Server error' });
-// });
-
-// app.use((req, res) => {
-//   res.status(404).json({ error: 'Not found' });
-// });
-
-// const startServer = async () => {
-//   const PORT = process.env.PORT || 3000;
-//  server.listen(PORT, () => {
-//   console.log(`🚀 Server running on port ${PORT}`);
-//   console.log(`🌐 HTTP: http://localhost:${PORT}`);
-//   console.log(`🔌 WebSocket: ws://localhost:${PORT}`);
-// });
-// };
-
-// if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
-//   startServer();
-// }
-
-// module.exports = app;
