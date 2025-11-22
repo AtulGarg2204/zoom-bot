@@ -143,7 +143,7 @@
     <script src="https://js.pusher.com/8.2.0/pusher.min.js"></script>
     <script>
         const params = new URLSearchParams(window.location.search);
-        // const SERVER_URL = params.get('server') || 'https://zoom-bot-zkf2.vercel.app';
+       // const SERVER_URL = params.get('server') || 'https://zoom-bot-zkf2.vercel.app';
         const SERVER_URL = params.get('server') || 'https://zoom-bot-pgyj.onrender.com';
         // const SERVER_URL = params.get('server') || 'http://localhost:3000';
         const PUSHER_KEY = params.get('pusher_key') || '53efc497795d6002deb2';
@@ -157,12 +157,12 @@
         const notification = document.getElementById('notification');
         const eventId = params.get('eventId');
 
-let sessionId;
-if (eventId) {
-    sessionId = 'session-' + eventId;  // ← Matches backend!
-} else {
-    sessionId = 'session-' + Math.random().toString(36).substr(2, 9);
-}
+        let sessionId;
+        if (eventId) {
+            sessionId = 'session-' + eventId;
+        } else {
+            sessionId = 'session-' + Math.random().toString(36).substr(2, 9);
+        }
 
         console.log('🆔 Session ID:', sessionId);
         console.log('🌐 Server:', SERVER_URL);
@@ -202,66 +202,168 @@ if (eventId) {
             }
         }, { once: true });
 
-        function base64ToAudioBuffer(base64Audio) {
-            const binaryString = atob(base64Audio);
-            const len = binaryString.length;
-            const bytes = new Uint8Array(len);
-            
-            for (let i = 0; i < len; i++) {
-                bytes[i] = binaryString.charCodeAt(i);
+        // ====================================================================
+        // WEBSOCKET FOR AUDIO STREAMING
+        // ====================================================================
+
+        let audioWs = null;
+        let audioQueue = [];
+        let isPlayingQueue = false;
+        let reconnectAttempts = 0;
+        const MAX_RECONNECT_ATTEMPTS = 5;
+
+        function connectAudioWebSocket() {
+            try {
+                // Determine WebSocket URL
+                const wsProtocol = SERVER_URL.startsWith('https') ? 'wss:' : 'ws:';
+                const wsHost = SERVER_URL.replace('https://', '').replace('http://', '');
+                const wsUrl = `${wsProtocol}//${wsHost}?sessionId=${sessionId}`;
+                
+                console.log('🔌 Connecting to WebSocket:', wsUrl);
+                
+                audioWs = new WebSocket(wsUrl);
+                
+                audioWs.onopen = () => {
+                    console.log('✅ Audio WebSocket connected');
+                    reconnectAttempts = 0;
+                };
+                
+                audioWs.onmessage = async (event) => {
+                    try {
+                        const message = JSON.parse(event.data);
+                        console.log('📨 WebSocket message:', message.type);
+                        
+                        switch (message.type) {
+                            case 'connected':
+                                console.log('✅ WebSocket connection confirmed');
+                                break;
+                                
+                            case 'audio-start':
+                                console.log('🎵 Audio stream starting...');
+                                audioQueue = [];
+                                isPlayingQueue = false;
+                                showNotification('🎵 Receiving audio...');
+                                break;
+                                
+                            case 'audio-chunk':
+                                console.log(`📦 Received audio chunk ${message.chunkNumber} (${message.chunkSize} bytes)`);
+                                audioQueue.push(message.data);
+                                
+                                // Start playing if not already playing
+                                if (!isPlayingQueue) {
+                                    playNextChunkFromQueue();
+                                }
+                                break;
+                                
+                            case 'audio-end':
+                                console.log(`✅ Audio stream complete: ${message.totalChunks} chunks, ${message.totalBytes} bytes`);
+                                break;
+                                
+                            case 'audio-error':
+                                console.error('❌ Audio stream error:', message.error);
+                                showNotification('❌ Audio error: ' + message.error);
+                                break;
+                                
+                            case 'pong':
+                                // Heartbeat response
+                                break;
+                        }
+                    } catch (error) {
+                        console.error('❌ Error parsing WebSocket message:', error);
+                    }
+                };
+                
+                audioWs.onclose = (event) => {
+                    console.log('🔌 WebSocket disconnected:', event.code, event.reason);
+                    audioWs = null;
+                    
+                    // Attempt reconnection
+                    if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+                        reconnectAttempts++;
+                        const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 10000);
+                        console.log(`🔄 Reconnecting in ${delay}ms... (attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`);
+                        setTimeout(connectAudioWebSocket, delay);
+                    } else {
+                        console.error('❌ Max reconnection attempts reached');
+                        showNotification('❌ WebSocket connection failed');
+                    }
+                };
+                
+                audioWs.onerror = (error) => {
+                    console.error('❌ WebSocket error:', error);
+                };
+                
+            } catch (error) {
+                console.error('❌ Error creating WebSocket:', error);
             }
-            
-            const int16Array = new Int16Array(bytes.buffer);
-            const float32Array = new Float32Array(int16Array.length);
-            const scale = 1 / 32768;
-            
-            for (let i = 0; i < int16Array.length; i++) {
-                float32Array[i] = int16Array[i] * scale;
-            }
-            
-            return float32Array;
         }
 
-       async function playAudioImmediate(base64Audio, t0) {
-    try {
-        if (audioCtx.state === 'suspended') {
-            await audioCtx.resume();
+        async function playNextChunkFromQueue() {
+            if (audioQueue.length === 0) {
+                console.log('✅ All chunks played');
+                isPlayingQueue = false;
+                
+                // Notify backend that audio finished
+                if (audioWs && audioWs.readyState === WebSocket.OPEN) {
+                    audioWs.send(JSON.stringify({
+                        type: 'audio-finished',
+                        timestamp: Date.now()
+                    }));
+                    console.log('📨 Sent audio-finished to backend');
+                }
+                
+                return;
+            }
+            
+            isPlayingQueue = true;
+            const base64Chunk = audioQueue.shift();
+            
+            console.log(`🔊 Playing chunk (${audioQueue.length} remaining in queue)`);
+            
+            try {
+                if (audioCtx.state === 'suspended') {
+                    await audioCtx.resume();
+                }
+                
+                // Decode MP3 chunk
+                const binaryString = atob(base64Chunk);
+                const len = binaryString.length;
+                const bytes = new Uint8Array(len);
+                
+                for (let i = 0; i < len; i++) {
+                    bytes[i] = binaryString.charCodeAt(i);
+                }
+                
+                const audioBuffer = await audioCtx.decodeAudioData(bytes.buffer);
+                
+                const source = audioCtx.createBufferSource();
+                source.buffer = audioBuffer;
+                source.connect(audioCtx.destination);
+                
+                // When this chunk finishes, play next chunk
+                source.onended = () => {
+                    console.log('✅ Chunk playback finished');
+                    playNextChunkFromQueue();
+                };
+                
+                source.start(0);
+                
+            } catch (error) {
+                console.error('❌ Chunk playback error:', error);
+                // Try next chunk even if this one failed
+                playNextChunkFromQueue();
+            }
         }
-        
-        // Decode MP3 from Rime AI
-        const binaryString = atob(base64Audio);
-        const len = binaryString.length;
-        const bytes = new Uint8Array(len);
-        
-        for (let i = 0; i < len; i++) {
-            bytes[i] = binaryString.charCodeAt(i);
-        }
-        
-        // Decode MP3 to audio buffer
-        const audioBuffer = await audioCtx.decodeAudioData(bytes.buffer);
-        
-        const source = audioCtx.createBufferSource();
-        source.buffer = audioBuffer;
-        source.connect(audioCtx.destination);
-        source.start(0);
-        
-        const t_play = Date.now();
-        const y = t_play - t0;
-        
-        console.log(`[${y}ms] ⚡ BROWSER STARTS PLAYING RIME AUDIO (MP3)`);
-        console.log(`   Audio duration: ${audioBuffer.duration.toFixed(2)}s`);
-        console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
-        
-    } catch (error) {
-        console.error('PLAYBACK ERROR:', error);
-        console.error('Error details:', error.message);
-    }
-}
+
+        // ====================================================================
+        // MAIN CONNECTION SETUP
+        // ====================================================================
+
         async function connectToServer() {
             try {
                 updateStatus('connecting', 'Connecting...');
                 
-                // Initialize Pusher
+                // Initialize Pusher for transcripts
                 console.log('📡 Initializing Pusher...');
                 const pusher = new Pusher(PUSHER_KEY, {
                     cluster: PUSHER_CLUSTER,
@@ -276,42 +378,32 @@ if (eventId) {
                     console.log('✅ Pusher subscription successful');
                 });
                 
-           // Listen for interim transcripts (shows live updates)
-channel.bind('transcript-interim', (data) => {
-    console.log('📥 Received transcript-interim event:', data);
-    if (data.text) {
-        // Show interim in gray/italic style
-        if (data.is_final && data.speech_final) {
-            // Final transcript - bold style
-            showTranscript(data.text);
-        } else {
-            // Interim transcript - show in lighter style
-            transcriptContent.innerHTML = `<div class="user-transcript" style="opacity: 0.7; font-style: italic;">${data.text}</div>`;
-        }
-    }
-});
+                // Listen for transcripts
+                channel.bind('transcript', (data) => {
+                    console.log('📥 Received transcript event:', data);
+                    if (data.text) {
+                        showTranscript(data.text);
+                    }
+                });
 
-// Listen for final transcript
-channel.bind('transcript', (data) => {
-    console.log('📥 Received final transcript event:', data);
-    if (data.text) {
-        showTranscript(data.text);
-    }
-});
-
-// Listen for AI response
-channel.bind('ai-response', (data) => {
-    console.log('📥 Received AI response event:', data);
-    if (data.text) {
-        showResponse(data.text);
-    }
-});
-
-// Listen for audio
-channel.bind('audio-received', (data) => {
-    console.log('📥 Received audio-received event:', data);
-    showNotification('🔊 Received audio from Deepgram');
-});
+                // Listen for AI responses
+                channel.bind('ai-response', (data) => {
+                    console.log('📥 Received AI response event:', data);
+                    if (data.text) {
+                        showResponse(data.text);
+                    }
+                });
+                
+                // Connect WebSocket for audio streaming
+                connectAudioWebSocket();
+                
+                // Heartbeat to keep WebSocket alive
+                setInterval(() => {
+                    if (audioWs && audioWs.readyState === WebSocket.OPEN) {
+                        audioWs.send(JSON.stringify({ type: 'ping' }));
+                    }
+                }, 30000); // Every 30 seconds
+                
                 // Connect to backend
                 const response = await fetch(`${SERVER_URL}/api/connect`, {
                     method: 'POST',
@@ -324,22 +416,6 @@ channel.bind('audio-received', (data) => {
                 console.log('✅ Connected to server');
                 updateStatus('connected', 'Ready');
                 statusInfo.textContent = 'Speak now';
-                
-                // Poll for audio
-                setInterval(async () => {
-                    try {
-                        const audioResponse = await fetch(`${SERVER_URL}/api/get-audio/${sessionId}`);
-                        const data = await audioResponse.json();
-                        
-                        if (data.audio && data.audio.length > 0 && data.t0) {
-                            for (const chunk of data.audio) {
-                                await playAudioImmediate(chunk, data.t0);
-                            }
-                        }
-                    } catch (error) {
-                        // Silent
-                    }
-                }, 100);
                 
                 // Get microphone
                 const stream = await navigator.mediaDevices.getUserMedia({ 
