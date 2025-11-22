@@ -97,6 +97,186 @@ function addToHistory(sessionId, speaker, message) {
   conversationHistory.set(sessionId, history);
 }
 
+// async function processWithLLMContextAware(sessionId, t0) {
+//   try {
+//     if (!conversationHistory.has(sessionId)) {
+//       conversationHistory.set(sessionId, []);
+//     }
+    
+//     const history = conversationHistory.get(sessionId);
+    
+//     // Build conversation context with speaker labels
+//     const conversationContext = history.map(msg => {
+//       return `${msg.speaker}: ${msg.content}`;
+//     }).join('\n');
+    
+//     const t_llm_start = Date.now();
+    
+//     console.log('\n' + '🤖'.repeat(40));
+//     console.log('🤖 LLM CONTEXT-AWARE PROCESSING (GROQ + LLAMA)');
+//     console.log('🤖'.repeat(40));
+//     console.log(`\n⏱️  [${t_llm_start - t0}ms] Groq LLM Request Starting...`);
+//     console.log('🦙 Model: Llama 4 Maverick 17B');
+    
+//     console.log('\n📜 CONVERSATION CONTEXT SENT TO LLM:');
+//     console.log('┌' + '─'.repeat(78) + '┐');
+//     if (conversationContext.length > 0) {
+//       conversationContext.split('\n').forEach(line => {
+//         console.log('│ ' + line.padEnd(77) + '│');
+//       });
+//     } else {
+//       console.log('│ ' + '(No conversation history yet)'.padEnd(77) + '│');
+//     }
+//     console.log('└' + '─'.repeat(78) + '┘');
+    
+//     console.log('\n📊 CONTEXT STATS:');
+//     console.log(`   Total messages in context: ${history.length}`);
+//     console.log(`   Context length: ${conversationContext.length} characters`);
+    
+//    const response = await groq.chat.completions.create({
+//   model: 'meta-llama/llama-4-maverick-17b-128e-instruct',
+//   messages: [
+//     {
+//       role: 'system',
+//       content: `You are a friendly and helpful AI Assistant in a natural conversation. Speakers are labeled as Speaker 0, Speaker 1, etc.
+
+// YOUR PERSONALITY:
+// - Warm, approachable, and conversational
+// - Natural and human-like (not robotic)
+// - Helpful but not overly formal
+// - Can show personality and emotion when appropriate
+
+// RESPONSE STYLE:
+// - Use natural conversation fillers: "Oh", "Well", "You know", "Actually", "Hmm"
+// - Add warmth: "Great question!", "I'd be happy to help", "That's interesting!"
+// - Vary your responses (don't always start the same way)
+// - Keep responses conversational (10-20 words for natural flow)
+// - Use contractions: "I'm" not "I am", "That's" not "That is"
+
+// WHEN TO RESPOND:
+// 1. Someone says "bot", "assistant", or "AI" → Respond naturally
+// 2. Someone asks you a direct question → Respond warmly
+// 3. Follow-up after you just spoke → Continue conversation
+// 4. People talking to each other → Say only "SILENT"
+// 5. Unclear who is being addressed → Say only "SILENT"
+
+// EXAMPLES OF NATURAL RESPONSES:
+
+// Question: "Hey bot, what's 2+2?"
+// ❌ Bad: "Four."
+// ✅ Good: "Oh, that's four!"
+// ✅ Good: "It's four."
+// ✅ Good: "That'd be four."
+
+// Question: "How are you?"
+// ❌ Bad: "I'm well, thanks."
+// ✅ Good: "I'm doing great, thanks for asking! How about you?"
+// ✅ Good: "Pretty good! Thanks for asking."
+// ✅ Good: "I'm wonderful, thank you!"
+
+// Question: "What do you know about cricket?"
+// ❌ Bad: "It's a bat-and-ball sport."
+// ✅ Good: "Oh, cricket! It's a bat-and-ball sport played between two teams."
+// ✅ Good: "Well, cricket is a really popular sport, especially in countries like India and England."
+// ✅ Good: "Cricket's a fascinating game with two teams competing in innings."
+
+// Question: "What's your name?"
+// ❌ Bad: "I'm an AI Assistant."
+// ✅ Good: "I'm an AI assistant here to help! You can just call me 'bot' or 'assistant'."
+// ✅ Good: "You can call me your AI assistant! I'm here to help with anything you need."
+
+// Question: "Can you help me?"
+// ❌ Bad: "Yes."
+// ✅ Good: "Of course! I'd be happy to help. What do you need?"
+// ✅ Good: "Absolutely! What can I do for you?"
+// ✅ Good: "Sure thing! How can I assist?"
+
+// IMPORTANT:
+// - Be natural, not robotic
+// - Show personality while staying helpful
+// - Keep it conversational but concise (10-20 words)
+// - Never say "Yes, I should respond" or explain your reasoning
+// - If conversation is between others, just say "SILENT"`
+//     },
+//         {
+//           role: 'user',
+//           content: `Conversation:\n${conversationContext}\n\nIf conversation is between others, say "SILENT". If you should respond, give ONLY your answer.`
+//         }
+//       ],
+//       max_completion_tokens: 300,
+//       temperature: 0.5,
+//       top_p: 1
+//     });
+    
+//     const llmResponse = response.choices[0].message.content.trim();
+    
+//     const t_llm_end = Date.now();
+//     console.log(`\n⏱️  [${t_llm_end - t0}ms] Groq Response Received`);
+//     console.log(`⏱️  Groq took: ${t_llm_end - t_llm_start}ms ⚡`);
+//     console.log(`📊 Tokens used: ${response.usage.total_tokens}`);
+//     console.log(`📊 Prompt tokens: ${response.usage.prompt_tokens}`);
+//     console.log(`📊 Completion tokens: ${response.usage.completion_tokens}`);
+    
+//     console.log('\n💭 LLM DECISION:');
+//     console.log('┌' + '─'.repeat(78) + '┐');
+//     console.log('│ ' + llmResponse.padEnd(77) + '│');
+//     console.log('└' + '─'.repeat(78) + '┘');
+    
+//     // Check if LLM decided to respond or stay silent
+//     const isSilent = llmResponse.toUpperCase() === 'SILENT' || 
+//                      llmResponse.toUpperCase().startsWith('SILENT');
+    
+//     if (isSilent) {
+//       console.log('\n🤫 DECISION: STAY SILENT');
+//       console.log('   Reason: Conversation between other participants');
+//       console.log('   Action: No speech generation');
+      
+//       const channel = `session-${sessionId}`;
+//       pusher.trigger(channel, 'bot-silent', {
+//         message: 'Bot is listening but not responding'
+//       }).catch(err => console.error('Pusher error:', err));
+      
+//       console.log('   ✅ Sent "bot-silent" event to frontend');
+//       console.log('\n' + '='.repeat(80) + '\n');
+      
+//       return;
+//     }
+    
+//     // LLM decided to respond
+//     console.log('\n✅ DECISION: RESPOND');
+//     console.log(`   Response: "${llmResponse}"`);
+//     console.log('   Action: Generate speech and send to user');
+    
+//     const channel = `session-${sessionId}`;
+    
+//     await pusher.trigger(channel, 'ai-response', {
+//       text: llmResponse
+//     });
+//     console.log('   ✅ Sent AI response to frontend via Pusher');
+    
+//     console.log('\n📚 UPDATING CONVERSATION HISTORY:');
+//     console.log(`   Before: ${history.length} messages`);
+    
+//     // Add bot's response to history
+//     addToHistory(sessionId, 'AI Assistant', llmResponse);
+    
+//     console.log(`   After: ${conversationHistory.get(sessionId).length} messages`);
+//     console.log(`   Added: AI Assistant: "${llmResponse}"`);
+    
+//     console.log('\n🔊 STARTING TEXT-TO-SPEECH CONVERSION...');
+//     console.log('-'.repeat(80));
+    
+//     // Convert to speech
+//     await convertToSpeech(sessionId, llmResponse, t0);
+    
+//     console.log('\n' + '='.repeat(80) + '\n');
+    
+//   } catch (error) {
+//     console.error('\n❌ LLM ERROR:', error.message);
+//     console.error('Full error:', error);
+//     console.log('\n' + '='.repeat(80) + '\n');
+//   }
+// }
 async function processWithLLMContextAware(sessionId, t0) {
   try {
     if (!conversationHistory.has(sessionId)) {
@@ -113,10 +293,10 @@ async function processWithLLMContextAware(sessionId, t0) {
     const t_llm_start = Date.now();
     
     console.log('\n' + '🤖'.repeat(40));
-    console.log('🤖 LLM CONTEXT-AWARE PROCESSING (GROQ + LLAMA 4)');
+    console.log('🤖 LLM CONTEXT-AWARE PROCESSING (GROQ + GPT-OSS-20B)');
     console.log('🤖'.repeat(40));
     console.log(`\n⏱️  [${t_llm_start - t0}ms] Groq LLM Request Starting...`);
-    console.log('🦙 Model: Llama 4 Maverick 17B (128E)');
+    console.log('🧠 Model: GPT-OSS-20B');
     
     console.log('\n📜 CONVERSATION CONTEXT SENT TO LLM:');
     console.log('┌' + '─'.repeat(78) + '┐');
@@ -134,7 +314,7 @@ async function processWithLLMContextAware(sessionId, t0) {
     console.log(`   Context length: ${conversationContext.length} characters`);
     
     const response = await groq.chat.completions.create({
-      model: 'meta-llama/llama-4-maverick-17b-128e-instruct',
+      model: 'openai/gpt-oss-20b',
       messages: [
         {
           role: 'system',
@@ -206,9 +386,11 @@ IMPORTANT:
           content: `Conversation:\n${conversationContext}\n\nIf conversation is between others, say "SILENT". If you should respond, give ONLY your answer (under 20 words).`
         }
       ],
-      max_completion_tokens: 150,
-      temperature: 0.6,
-      top_p: 0.9
+      max_completion_tokens: 100,  // ← Increased to 100 (allows ~20 words comfortably)
+      temperature: 0.5,
+      top_p: 0.8,
+      stream: false,
+      reasoning_effort: 'low'
     });
     
     const llmResponse = response.choices[0].message.content.trim();
@@ -216,9 +398,9 @@ IMPORTANT:
     const t_llm_end = Date.now();
     console.log(`\n⏱️  [${t_llm_end - t0}ms] Groq Response Received`);
     console.log(`⏱️  Groq took: ${t_llm_end - t_llm_start}ms ⚡`);
-    console.log(`📊 Tokens used: ${response.usage.total_tokens}`);
-    console.log(`📊 Prompt tokens: ${response.usage.prompt_tokens}`);
-    console.log(`📊 Completion tokens: ${response.usage.completion_tokens}`);
+    console.log(`📊 Tokens used: ${response.usage?.total_tokens || 'N/A'}`);
+    console.log(`📊 Prompt tokens: ${response.usage?.prompt_tokens || 'N/A'}`);
+    console.log(`📊 Completion tokens: ${response.usage?.completion_tokens || 'N/A'}`);
     
     console.log('\n💭 LLM DECISION:');
     console.log('┌' + '─'.repeat(78) + '┐');
@@ -280,191 +462,6 @@ IMPORTANT:
     console.log('\n' + '='.repeat(80) + '\n');
   }
 }
-// async function processWithLLMContextAware(sessionId, t0) {
-//   try {
-//     if (!conversationHistory.has(sessionId)) {
-//       conversationHistory.set(sessionId, []);
-//     }
-    
-//     const history = conversationHistory.get(sessionId);
-    
-//     // Build conversation context with speaker labels
-//     const conversationContext = history.map(msg => {
-//       return `${msg.speaker}: ${msg.content}`;
-//     }).join('\n');
-    
-//     const t_llm_start = Date.now();
-    
-//     console.log('\n' + '🤖'.repeat(40));
-//     console.log('🤖 LLM CONTEXT-AWARE PROCESSING (GROQ + GPT-OSS-20B)');
-//     console.log('🤖'.repeat(40));
-//     console.log(`\n⏱️  [${t_llm_start - t0}ms] Groq LLM Request Starting...`);
-//     console.log('🧠 Model: GPT-OSS-20B');
-    
-//     console.log('\n📜 CONVERSATION CONTEXT SENT TO LLM:');
-//     console.log('┌' + '─'.repeat(78) + '┐');
-//     if (conversationContext.length > 0) {
-//       conversationContext.split('\n').forEach(line => {
-//         console.log('│ ' + line.padEnd(77) + '│');
-//       });
-//     } else {
-//       console.log('│ ' + '(No conversation history yet)'.padEnd(77) + '│');
-//     }
-//     console.log('└' + '─'.repeat(78) + '┘');
-    
-//     console.log('\n📊 CONTEXT STATS:');
-//     console.log(`   Total messages in context: ${history.length}`);
-//     console.log(`   Context length: ${conversationContext.length} characters`);
-    
-//     const response = await groq.chat.completions.create({
-//       model: 'openai/gpt-oss-20b',
-//       messages: [
-//         {
-//           role: 'system',
-//           content: `You are James, a friendly and helpful AI Assistant in a natural conversation. Speakers are labeled as Speaker 0, Speaker 1, etc.
-
-// YOUR PERSONALITY:
-// - Your name is James
-// - Warm, approachable, and conversational
-// - Natural and human-like (not robotic)
-// - Helpful but not overly formal
-// - Can show personality and emotion when appropriate
-
-// RESPONSE STYLE:
-// - Use natural conversation fillers: "Oh", "Well", "You know", "Actually", "Hmm"
-// - Add warmth: "Great question!", "I'd be happy to help", "That's interesting!"
-// - Vary your responses (don't always start the same way)
-// - Keep responses under 20 words for natural flow
-// - Use contractions: "I'm" not "I am", "That's" not "That is"
-
-// WHEN TO RESPOND:
-// 1. Someone says "James", "bot", "assistant", or "AI" → Respond naturally
-// 2. Someone asks you a direct question → Respond warmly
-// 3. Follow-up after you just spoke → Continue conversation
-// 4. People talking to each other → Say only "SILENT"
-// 5. Unclear who is being addressed → Say only "SILENT"
-
-// EXAMPLES OF NATURAL RESPONSES:
-
-// Question: "Hey James, what's 2+2?"
-// ❌ Too robotic: "Four."
-// ✅ Good: "Oh, that's four!"
-// ✅ Good: "That's four! Easy one!"
-
-// Question: "How are you?"
-// ❌ Too short: "Good."
-// ✅ Good: "I'm doing great, thanks for asking! How about you?"
-// ✅ Good: "Pretty good! Thanks for asking."
-
-// Question: "What do you know about cricket?"
-// ❌ Too long: "Cricket is a bat-and-ball sport that originated in England and is now played internationally with two teams of eleven players..."
-// ✅ Good: "Cricket's a bat-and-ball sport, super popular in India and England!"
-// ✅ Good: "It's a team sport with batting and bowling, really big in South Asia!"
-
-// Question: "What's your name?"
-// ❌ Too formal: "I am an AI Assistant."
-// ✅ Good: "I'm James, your AI assistant! Nice to meet you."
-// ✅ Good: "My name's James! I'm here to help."
-
-// Question: "Can you help me?"
-// ❌ Too short: "Yes."
-// ✅ Good: "Of course! I'd be happy to help. What do you need?"
-// ✅ Good: "Absolutely! What can I do for you?"
-
-// Question: "Tell me about yourself"
-// ❌ Too long: "I'm an artificial intelligence assistant created to help people with various tasks and questions throughout their day..."
-// ✅ Good: "I'm James, an AI assistant here to help with whatever you need!"
-// ✅ Good: "I'm James! I'm here to answer questions and help out however I can."
-
-// IMPORTANT:
-// - Be natural and friendly, not robotic
-// - Show personality while staying helpful
-// - Keep it conversational but under 20 words
-// - Never say "Yes, I should respond" or explain your reasoning
-// - If conversation is between others, just say "SILENT"
-// - Introduce yourself as James when asked your name`
-//         },
-//         {
-//           role: 'user',
-//           content: `Conversation:\n${conversationContext}\n\nIf conversation is between others, say "SILENT". If you should respond, give ONLY your answer (under 20 words).`
-//         }
-//       ],
-//       max_completion_tokens: 100,  // ← Increased to 100 (allows ~20 words comfortably)
-//       temperature: 0.5,
-//       top_p: 0.8,
-//       stream: false,
-//       reasoning_effort: 'low'
-//     });
-    
-//     const llmResponse = response.choices[0].message.content.trim();
-    
-//     const t_llm_end = Date.now();
-//     console.log(`\n⏱️  [${t_llm_end - t0}ms] Groq Response Received`);
-//     console.log(`⏱️  Groq took: ${t_llm_end - t_llm_start}ms ⚡`);
-//     console.log(`📊 Tokens used: ${response.usage?.total_tokens || 'N/A'}`);
-//     console.log(`📊 Prompt tokens: ${response.usage?.prompt_tokens || 'N/A'}`);
-//     console.log(`📊 Completion tokens: ${response.usage?.completion_tokens || 'N/A'}`);
-    
-//     console.log('\n💭 LLM DECISION:');
-//     console.log('┌' + '─'.repeat(78) + '┐');
-//     console.log('│ ' + llmResponse.padEnd(77) + '│');
-//     console.log('└' + '─'.repeat(78) + '┘');
-    
-//     // Check if LLM decided to respond or stay silent
-//     const isSilent = llmResponse.toUpperCase() === 'SILENT' || 
-//                      llmResponse.toUpperCase().startsWith('SILENT');
-    
-//     if (isSilent) {
-//       console.log('\n🤫 DECISION: STAY SILENT');
-//       console.log('   Reason: Conversation between other participants');
-//       console.log('   Action: No speech generation');
-      
-//       const channel = `session-${sessionId}`;
-//       pusher.trigger(channel, 'bot-silent', {
-//         message: 'Bot is listening but not responding'
-//       }).catch(err => console.error('Pusher error:', err));
-      
-//       console.log('   ✅ Sent "bot-silent" event to frontend');
-//       console.log('\n' + '='.repeat(80) + '\n');
-      
-//       return;
-//     }
-    
-//     // LLM decided to respond
-//     console.log('\n✅ DECISION: RESPOND');
-//     console.log(`   Response: "${llmResponse}"`);
-//     console.log('   Action: Generate speech and send to user');
-    
-//     const channel = `session-${sessionId}`;
-    
-//     await pusher.trigger(channel, 'ai-response', {
-//       text: llmResponse
-//     });
-//     console.log('   ✅ Sent AI response to frontend via Pusher');
-    
-//     console.log('\n📚 UPDATING CONVERSATION HISTORY:');
-//     console.log(`   Before: ${history.length} messages`);
-    
-//     // Add bot's response to history
-//     addToHistory(sessionId, 'AI Assistant', llmResponse);
-    
-//     console.log(`   After: ${conversationHistory.get(sessionId).length} messages`);
-//     console.log(`   Added: AI Assistant: "${llmResponse}"`);
-    
-//     console.log('\n🔊 STARTING TEXT-TO-SPEECH CONVERSION...');
-//     console.log('-'.repeat(80));
-    
-//     // Convert to speech
-//     await convertToSpeech(sessionId, llmResponse, t0);
-    
-//     console.log('\n' + '='.repeat(80) + '\n');
-    
-//   } catch (error) {
-//     console.error('\n❌ LLM ERROR:', error.message);
-//     console.error('Full error:', error);
-//     console.log('\n' + '='.repeat(80) + '\n');
-//   }
-// }
 async function convertToSpeech(sessionId, text, t0) {
   try {
     const t_tts_start = Date.now();
