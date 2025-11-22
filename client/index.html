@@ -263,173 +263,10 @@ if (eventId) {
                 
                 // Initialize Pusher
                 console.log('📡 Initializing Pusher...');
-               const pusher = new Pusher(PUSHER_KEY, {
-    cluster: PUSHER_CLUSTER,
-    forceTLS: true
-});
-
-// ====================================================================
-// WEBSOCKET FOR AUDIO STREAMING
-// ====================================================================
-
-let audioWs = null;
-let audioQueue = [];
-let isPlayingQueue = false;
-let reconnectAttempts = 0;
-const MAX_RECONNECT_ATTEMPTS = 5;
-
-function connectAudioWebSocket() {
-  try {
-    // Determine WebSocket URL
-    const wsProtocol = SERVER_URL.startsWith('https') ? 'wss:' : 'ws:';
-    const wsHost = SERVER_URL.replace('https://', '').replace('http://', '');
-    const wsUrl = `${wsProtocol}//${wsHost}?sessionId=${sessionId}`;
-    
-    console.log('🔌 Connecting to WebSocket:', wsUrl);
-    
-    audioWs = new WebSocket(wsUrl);
-    
-    audioWs.onopen = () => {
-      console.log('✅ Audio WebSocket connected');
-      reconnectAttempts = 0;
-    };
-    
-    audioWs.onmessage = async (event) => {
-      try {
-        const message = JSON.parse(event.data);
-        console.log('📨 WebSocket message:', message.type);
-        
-        switch (message.type) {
-          case 'connected':
-            console.log('✅ WebSocket connection confirmed');
-            break;
-            
-          case 'audio-start':
-            console.log('🎵 Audio stream starting...');
-            audioQueue = [];
-            isPlayingQueue = false;
-            showNotification('🎵 Receiving audio...');
-            break;
-            
-          case 'audio-chunk':
-            console.log(`📦 Received audio chunk ${message.chunkNumber} (${message.chunkSize} bytes)`);
-            audioQueue.push(message.data);
-            
-            // Start playing if not already playing
-            if (!isPlayingQueue) {
-              playNextChunkFromQueue();
-            }
-            break;
-            
-          case 'audio-end':
-            console.log(`✅ Audio stream complete: ${message.totalChunks} chunks, ${message.totalBytes} bytes`);
-            break;
-            
-          case 'audio-error':
-            console.error('❌ Audio stream error:', message.error);
-            showNotification('❌ Audio error: ' + message.error);
-            break;
-            
-          case 'pong':
-            // Heartbeat response
-            break;
-        }
-      } catch (error) {
-        console.error('❌ Error parsing WebSocket message:', error);
-      }
-    };
-    
-    audioWs.onclose = (event) => {
-      console.log('🔌 WebSocket disconnected:', event.code, event.reason);
-      audioWs = null;
-      
-      // Attempt reconnection
-      if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
-        reconnectAttempts++;
-        const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 10000);
-        console.log(`🔄 Reconnecting in ${delay}ms... (attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`);
-        setTimeout(connectAudioWebSocket, delay);
-      } else {
-        console.error('❌ Max reconnection attempts reached');
-        showNotification('❌ WebSocket connection failed');
-      }
-    };
-    
-    audioWs.onerror = (error) => {
-      console.error('❌ WebSocket error:', error);
-    };
-    
-  } catch (error) {
-    console.error('❌ Error creating WebSocket:', error);
-  }
-}
-
-async function playNextChunkFromQueue() {
-  if (audioQueue.length === 0) {
-    console.log('✅ All chunks played');
-    isPlayingQueue = false;
-    
-    // Notify backend that audio finished
-    if (audioWs && audioWs.readyState === WebSocket.OPEN) {
-      audioWs.send(JSON.stringify({
-        type: 'audio-finished',
-        timestamp: Date.now()
-      }));
-      console.log('📨 Sent audio-finished to backend');
-    }
-    
-    return;
-  }
-  
-  isPlayingQueue = true;
-  const base64Chunk = audioQueue.shift();
-  
-  console.log(`🔊 Playing chunk (${audioQueue.length} remaining in queue)`);
-  
-  try {
-    if (audioCtx.state === 'suspended') {
-      await audioCtx.resume();
-    }
-    
-    // Decode MP3 chunk
-    const binaryString = atob(base64Chunk);
-    const len = binaryString.length;
-    const bytes = new Uint8Array(len);
-    
-    for (let i = 0; i < len; i++) {
-      bytes[i] = binaryString.charCodeAt(i);
-    }
-    
-    const audioBuffer = await audioCtx.decodeAudioData(bytes.buffer);
-    
-    const source = audioCtx.createBufferSource();
-    source.buffer = audioBuffer;
-    source.connect(audioCtx.destination);
-    
-    // When this chunk finishes, play next chunk
-    source.onended = () => {
-      console.log('✅ Chunk playback finished');
-      playNextChunkFromQueue();
-    };
-    
-    source.start(0);
-    
-  } catch (error) {
-    console.error('❌ Chunk playback error:', error);
-    // Try next chunk even if this one failed
-    playNextChunkFromQueue();
-  }
-}
-
-// Connect WebSocket on page load
-connectAudioWebSocket();
-
-// Heartbeat to keep connection alive
-setInterval(() => {
-  if (audioWs && audioWs.readyState === WebSocket.OPEN) {
-    audioWs.send(JSON.stringify({ type: 'ping' }));
-  }
-}, 30000); // Every 30 seconds
+                const pusher = new Pusher(PUSHER_KEY, {
+                    cluster: PUSHER_CLUSTER,
+                    forceTLS: true
+                });
                 
                 const channelName = `session-${sessionId}`;
                 console.log('📺 Subscribing to channel:', channelName);
@@ -488,21 +325,21 @@ channel.bind('audio-received', (data) => {
                 updateStatus('connected', 'Ready');
                 statusInfo.textContent = 'Speak now';
                 
-                // // Poll for audio
-                // setInterval(async () => {
-                //     try {
-                //         const audioResponse = await fetch(`${SERVER_URL}/api/get-audio/${sessionId}`);
-                //         const data = await audioResponse.json();
+                // Poll for audio
+                setInterval(async () => {
+                    try {
+                        const audioResponse = await fetch(`${SERVER_URL}/api/get-audio/${sessionId}`);
+                        const data = await audioResponse.json();
                         
-                //         if (data.audio && data.audio.length > 0 && data.t0) {
-                //             for (const chunk of data.audio) {
-                //                 await playAudioImmediate(chunk, data.t0);
-                //             }
-                //         }
-                //     } catch (error) {
-                //         // Silent
-                //     }
-                // }, 100);
+                        if (data.audio && data.audio.length > 0 && data.t0) {
+                            for (const chunk of data.audio) {
+                                await playAudioImmediate(chunk, data.t0);
+                            }
+                        }
+                    } catch (error) {
+                        // Silent
+                    }
+                }, 100);
                 
                 // Get microphone
                 const stream = await navigator.mediaDevices.getUserMedia({ 
