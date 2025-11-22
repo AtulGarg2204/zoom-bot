@@ -7,9 +7,9 @@ require('dotenv').config();
 const { createClient } = require('@deepgram/sdk');
 const Groq = require('groq-sdk');
 const { google } = require('googleapis');
-
+const http = require('http'); 
 const app = express();
-
+const server = http.createServer(app);
 const pusher = new Pusher({
   appId: process.env.PUSHER_APP_ID,
   key: process.env.PUSHER_KEY,
@@ -17,7 +17,61 @@ const pusher = new Pusher({
   cluster: process.env.PUSHER_CLUSTER,
   useTLS: true
 });
+const wss = new WebSocket.Server({ server });
+const wsConnections = new Map(); // sessionId -> WebSocket connection
 
+console.log('🔌 WebSocket server initialized');
+
+// Handle WebSocket connections
+wss.on('connection', (ws, req) => {
+  // Extract sessionId from query parameters
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  const sessionId = url.searchParams.get('sessionId');
+  
+  console.log(`🔌 WebSocket connected: ${sessionId}`);
+  
+  if (sessionId) {
+    wsConnections.set(sessionId, ws);
+    
+    // Send connection confirmation
+    ws.send(JSON.stringify({
+      type: 'connected',
+      sessionId: sessionId,
+      timestamp: Date.now()
+    }));
+  }
+  
+  // Handle incoming messages from frontend
+  ws.on('message', (message) => {
+    try {
+      const data = JSON.parse(message);
+      console.log(`📨 WebSocket message from ${sessionId}:`, data.type);
+      
+      if (data.type === 'audio-finished') {
+        console.log(`🔇 Audio playback finished: ${sessionId}`);
+      }
+      
+      if (data.type === 'ping') {
+        ws.send(JSON.stringify({ type: 'pong' }));
+      }
+    } catch (error) {
+      console.error('❌ WebSocket message parse error:', error);
+    }
+  });
+  
+  // Handle disconnection
+  ws.on('close', () => {
+    console.log(`🔌 WebSocket disconnected: ${sessionId}`);
+    wsConnections.delete(sessionId);
+  });
+  
+  // Handle errors
+  ws.on('error', (error) => {
+    console.error(`❌ WebSocket error for ${sessionId}:`, error.message);
+  });
+});
+
+console.log('🔌 WebSocket handlers configured');
 console.log('🔧 Pusher initialized');
 
 // CORS updated
@@ -462,67 +516,169 @@ IMPORTANT:
     console.log('\n' + '='.repeat(80) + '\n');
   }
 }
+// async function convertToSpeech(sessionId, text, t0) {
+//   try {
+//     const t_tts_start = Date.now();
+//     console.log(`[${t_tts_start - t0}ms] TTS START`);
+    
+//     const response = await deepgram.speak.request(
+//       { text },
+//       {
+//         model: 'aura-asteria-en',
+//         encoding: 'linear16',
+//         sample_rate: 24000,
+//         container: 'none'
+//       }
+//     );
+    
+//     const stream = await response.getStream();
+//     const audioChunks = [];
+    
+//     for await (const chunk of stream) {
+//       audioChunks.push(chunk);
+//     }
+    
+//     const audioBuffer = Buffer.concat(audioChunks);
+//     const base64Audio = audioBuffer.toString('base64');
+    
+//     const t_tts_end = Date.now();
+//     console.log(`[${t_tts_end - t0}ms] TTS END`);
+    
+//     // Send notification that audio was received
+//     const channel = `session-${sessionId}`;
+    
+//     try {
+//       await pusher.trigger(channel, 'audio-received', {
+//         message: 'Received audio from Deepgram',
+//         timestamp: Date.now()
+//       });
+//       console.log(`✅ Audio-received notification sent`);
+//     } catch (err) {
+//       console.error('❌ Pusher error:', err);
+//     }
+    
+//     if (!audioResponses.has(sessionId)) {
+//       audioResponses.set(sessionId, []);
+//     }
+//     audioResponses.get(sessionId).push({ audio: base64Audio, t0: t0 });
+    
+//   } catch (error) {
+//     console.error('TTS ERROR:', error.message);
+//   }
+// }
+// async function convertToSpeech(sessionId, text, t0) {
+//   try {
+//     if (!RIME_API_KEY) {
+//       throw new Error('Rime API key not configured');
+//     }
+
+//     const t_tts_start = Date.now();
+//     console.log(`[${t_tts_start - t0}ms] TTS START (Rime AI)`);
+//     console.log('   Using Rime AI TTS');
+//     console.log('   Model: mist');
+//     console.log('   Speaker: orion');
+//     console.log('   Text:', text);
+    
+//     const response = await fetch('https://users.rime.ai/v1/rime-tts', {
+//       method: 'POST',
+//       headers: {
+//         'Accept': 'audio/mp3',
+//         'Authorization': `Bearer ${RIME_API_KEY}`,
+//         'Content-Type': 'application/json'
+//       },
+//       body: JSON.stringify({
+//         speaker: 'orion',
+//         text: text,
+//         modelId: 'arcana',
+//         samplingRate: 24000
+//       })
+//     });
+    
+//     if (!response.ok) {
+//       const errorText = await response.text();
+//       throw new Error(`Rime API error: ${response.status} - ${errorText}`);
+//     }
+    
+//     const t_first_byte = Date.now();
+//     console.log(`[${t_first_byte - t0}ms] ⚡ First byte received from Rime`);
+//     console.log(`   Time to first byte: ${t_first_byte - t_tts_start}ms`);
+    
+//     // Get audio as array buffer
+//     const arrayBuffer = await response.arrayBuffer();
+    
+//     const t_download_complete = Date.now();
+//     console.log(`[${t_download_complete - t0}ms] 📥 Audio download complete`);
+//     console.log(`   Download time: ${t_download_complete - t_first_byte}ms`);
+//     console.log(`   Audio size: ${arrayBuffer.byteLength} bytes`);
+    
+//     // Convert MP3 to base64
+//     const audioBuffer = Buffer.from(arrayBuffer);
+//     const base64Audio = audioBuffer.toString('base64');
+    
+//     const t_tts_end = Date.now();
+//     console.log(`[${t_tts_end - t0}ms] TTS END (Rime AI)`);
+//     console.log(`   Total TTS time: ${t_tts_end - t_tts_start}ms`);
+//     console.log(`   Breakdown:`);
+//     console.log(`     - Time to first byte: ${t_first_byte - t_tts_start}ms`);
+//     console.log(`     - Download time: ${t_download_complete - t_first_byte}ms`);
+//     console.log(`     - Processing: ${t_tts_end - t_download_complete}ms`);
+    
+//     // Send notification that audio was received
+//     const channel = `session-${sessionId}`;
+    
+//     try {
+//       await pusher.trigger(channel, 'audio-received', {
+//         message: 'Received audio from Rime AI',
+//         timestamp: Date.now()
+//       });
+//       console.log(`✅ Audio-received notification sent`);
+//     } catch (err) {
+//       console.error('❌ Pusher error:', err);
+//     }
+    
+//     if (!audioResponses.has(sessionId)) {
+//       audioResponses.set(sessionId, []);
+//     }
+    
+//     // Store base64 audio for frontend to fetch
+//     audioResponses.get(sessionId).push({ audio: base64Audio, t0: t0 });
+    
+//     console.log('✅ Audio stored in audioResponses map');
+    
+//   } catch (error) {
+//     console.error('❌ RIME AI TTS ERROR:', error.message);
+//     console.error('   Full error:', error);
+//   }
+// }
 async function convertToSpeech(sessionId, text, t0) {
   try {
-    const t_tts_start = Date.now();
-    console.log(`[${t_tts_start - t0}ms] TTS START`);
+    // Get WebSocket connection for this session
+    const ws = wsConnections.get(sessionId);
     
-    const response = await deepgram.speak.request(
-      { text },
-      {
-        model: 'aura-asteria-en',
-        encoding: 'linear16',
-        sample_rate: 24000,
-        container: 'none'
-      }
-    );
-    
-    const stream = await response.getStream();
-    const audioChunks = [];
-    
-    for await (const chunk of stream) {
-      audioChunks.push(chunk);
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      console.warn('⚠️ No active WebSocket connection for session:', sessionId);
+      console.log('   Falling back to non-streaming...');
+      // Fallback to non-streaming (keep old code as backup)
+      return await convertToSpeechNonStreaming(sessionId, text, t0);
     }
     
-    const audioBuffer = Buffer.concat(audioChunks);
-    const base64Audio = audioBuffer.toString('base64');
-    
-    const t_tts_end = Date.now();
-    console.log(`[${t_tts_end - t0}ms] TTS END`);
-    
-    // Send notification that audio was received
-    const channel = `session-${sessionId}`;
-    
-    try {
-      await pusher.trigger(channel, 'audio-received', {
-        message: 'Received audio from Deepgram',
-        timestamp: Date.now()
-      });
-      console.log(`✅ Audio-received notification sent`);
-    } catch (err) {
-      console.error('❌ Pusher error:', err);
-    }
-    
-    if (!audioResponses.has(sessionId)) {
-      audioResponses.set(sessionId, []);
-    }
-    audioResponses.get(sessionId).push({ audio: base64Audio, t0: t0 });
-    
-  } catch (error) {
-    console.error('TTS ERROR:', error.message);
-  }
-}async function convertToSpeech(sessionId, text, t0) {
-  try {
     if (!RIME_API_KEY) {
       throw new Error('Rime API key not configured');
     }
 
     const t_tts_start = Date.now();
-    console.log(`[${t_tts_start - t0}ms] TTS START (Rime AI)`);
-    console.log('   Using Rime AI TTS');
+    console.log(`[${t_tts_start - t0}ms] TTS STREAMING START (Rime AI)`);
+    console.log('   Using Rime AI TTS with WebSocket Streaming');
     console.log('   Model: mist');
     console.log('   Speaker: orion');
     console.log('   Text:', text);
+    
+    // Send start event to frontend
+    ws.send(JSON.stringify({
+      type: 'audio-start',
+      timestamp: Date.now(),
+      t0: t0
+    }));
     
     const response = await fetch('https://users.rime.ai/v1/rime-tts', {
       method: 'POST',
@@ -548,32 +704,70 @@ async function convertToSpeech(sessionId, text, t0) {
     console.log(`[${t_first_byte - t0}ms] ⚡ First byte received from Rime`);
     console.log(`   Time to first byte: ${t_first_byte - t_tts_start}ms`);
     
-    // Get audio as array buffer
-    const arrayBuffer = await response.arrayBuffer();
+    // Stream audio chunks to frontend as they arrive
+    const reader = response.body.getReader();
+    let totalBytes = 0;
+    let chunkCount = 0;
     
-    const t_download_complete = Date.now();
-    console.log(`[${t_download_complete - t0}ms] 📥 Audio download complete`);
-    console.log(`   Download time: ${t_download_complete - t_first_byte}ms`);
-    console.log(`   Audio size: ${arrayBuffer.byteLength} bytes`);
+    console.log('📡 Starting to stream audio chunks to frontend...');
     
-    // Convert MP3 to base64
-    const audioBuffer = Buffer.from(arrayBuffer);
-    const base64Audio = audioBuffer.toString('base64');
+    while (true) {
+      const { done, value } = await reader.read();
+      
+      if (done) {
+        console.log(`✅ Stream complete: ${chunkCount} chunks, ${totalBytes} bytes`);
+        break;
+      }
+      
+      // Convert chunk to base64
+      const base64Chunk = Buffer.from(value).toString('base64');
+      totalBytes += value.length;
+      chunkCount++;
+      
+      // Send chunk immediately to frontend via WebSocket
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          type: 'audio-chunk',
+          data: base64Chunk,
+          format: 'mp3',
+          chunkNumber: chunkCount,
+          chunkSize: value.length,
+          t0: t0
+        }));
+        
+        console.log(`📦 Sent chunk ${chunkCount} (${value.length} bytes) to frontend`);
+      } else {
+        console.warn('⚠️ WebSocket closed during streaming');
+        break;
+      }
+      
+      // Log first chunk timing (this is when user starts hearing audio!)
+      if (chunkCount === 1) {
+        const firstChunkSent = Date.now();
+        console.log(`⚡ FIRST CHUNK sent to frontend in ${firstChunkSent - t_tts_start}ms!`);
+        console.log(`   User will start hearing audio now!`);
+      }
+    }
+    
+    // Send end event
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        type: 'audio-end',
+        totalChunks: chunkCount,
+        totalBytes: totalBytes,
+        timestamp: Date.now()
+      }));
+    }
     
     const t_tts_end = Date.now();
-    console.log(`[${t_tts_end - t0}ms] TTS END (Rime AI)`);
-    console.log(`   Total TTS time: ${t_tts_end - t_tts_start}ms`);
-    console.log(`   Breakdown:`);
-    console.log(`     - Time to first byte: ${t_first_byte - t_tts_start}ms`);
-    console.log(`     - Download time: ${t_download_complete - t_first_byte}ms`);
-    console.log(`     - Processing: ${t_tts_end - t_download_complete}ms`);
+    console.log(`[${t_tts_end - t0}ms] TTS STREAMING END (Rime AI)`);
+    console.log(`   Total streaming time: ${t_tts_end - t_tts_start}ms`);
     
-    // Send notification that audio was received
+    // Send notification
     const channel = `session-${sessionId}`;
-    
     try {
       await pusher.trigger(channel, 'audio-received', {
-        message: 'Received audio from Rime AI',
+        message: 'Received audio from Rime AI (Streaming)',
         timestamp: Date.now()
       });
       console.log(`✅ Audio-received notification sent`);
@@ -581,21 +775,73 @@ async function convertToSpeech(sessionId, text, t0) {
       console.error('❌ Pusher error:', err);
     }
     
-    if (!audioResponses.has(sessionId)) {
-      audioResponses.set(sessionId, []);
-    }
-    
-    // Store base64 audio for frontend to fetch
-    audioResponses.get(sessionId).push({ audio: base64Audio, t0: t0 });
-    
-    console.log('✅ Audio stored in audioResponses map');
-    
   } catch (error) {
-    console.error('❌ RIME AI TTS ERROR:', error.message);
+    console.error('❌ RIME AI STREAMING ERROR:', error.message);
     console.error('   Full error:', error);
+    
+    // Send error to frontend
+    const ws = wsConnections.get(sessionId);
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        type: 'audio-error',
+        error: error.message
+      }));
+    }
   }
 }
 
+// Backup non-streaming function (if WebSocket not available)
+async function convertToSpeechNonStreaming(sessionId, text, t0) {
+  try {
+    if (!RIME_API_KEY) {
+      throw new Error('Rime API key not configured');
+    }
+
+    const t_tts_start = Date.now();
+    console.log(`[${t_tts_start - t0}ms] TTS START (Rime AI - Non-Streaming Fallback)`);
+    
+    const response = await fetch('https://users.rime.ai/v1/rime-tts', {
+      method: 'POST',
+      headers: {
+        'Accept': 'audio/mp3',
+        'Authorization': `Bearer ${RIME_API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        speaker: 'orion',
+        text: text,
+        modelId: 'arcana',
+        samplingRate: 24000
+      })
+    });
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Rime API error: ${response.status} - ${errorText}`);
+    }
+    
+    const arrayBuffer = await response.arrayBuffer();
+    const audioBuffer = Buffer.from(arrayBuffer);
+    const base64Audio = audioBuffer.toString('base64');
+    
+    const t_tts_end = Date.now();
+    console.log(`[${t_tts_end - t0}ms] TTS END (Non-Streaming)`);
+    
+    if (!audioResponses.has(sessionId)) {
+      audioResponses.set(sessionId, []);
+    }
+    audioResponses.get(sessionId).push({ audio: base64Audio, t0: t0 });
+    
+    const channel = `session-${sessionId}`;
+    await pusher.trigger(channel, 'audio-received', {
+      message: 'Received audio from Rime AI',
+      timestamp: Date.now()
+    });
+    
+  } catch (error) {
+    console.error('❌ TTS ERROR:', error.message);
+  }
+}
 async function checkIfSentenceComplete(transcript, t_start) {
   try {
     console.log('\n🔍 Sentence Completeness Check (JSON Mode)');
@@ -1366,7 +1612,7 @@ app.post('/api/connect', async (req, res) => {
       encoding: 'linear16',
       sample_rate: 24000,
       channels: 1,
-      endpointing: 700,
+      endpointing: 500,
       diarize: true,
       punctuate: true
     });
@@ -1428,7 +1674,7 @@ app.post('/api/connect', async (req, res) => {
         
         if (data.speech_final) {
           console.log('\n🎯 ENDPOINTING TRIGGERED!');
-          console.log('   ✅ Detected 700ms of silence');
+          console.log('   ✅ Detected 500ms of silence');
           console.log('   ✅ Complete utterance finalized');
         }
         
