@@ -608,38 +608,33 @@ async function convertToSpeechElevenLabs(sessionId, text, t0) {
 }
 async function convertToSpeechRimeStreaming(sessionId, text, t0) {
   try {
-    // Get WebSocket connection for this session
+    if (!RIME_API_KEY) {
+      throw new Error('Rime API key not configured');
+    }
+    
     const ws = wsConnections.get(sessionId);
     
     if (!ws || ws.readyState !== WebSocket.OPEN) {
       console.warn('⚠️ No active WebSocket connection for session:', sessionId);
-      console.log('   Falling back to non-streaming...');
-      // Fallback to regular non-streaming
       return await convertToSpeechRime(sessionId, text, t0);
-    }
-    
-    if (!RIME_API_KEY) {
-      throw new Error('Rime API key not configured');
     }
     
     audioPlayingStatus.set(sessionId, true);
     console.log('🔊 RIME AI STREAMING - Audio playback started');
     
     const t_tts_start = Date.now();
-    console.log(`[${t_tts_start - t0}ms] TTS STREAM START (Rime AI)`);
+    console.log(`[${t_tts_start - t0}ms] TTS STREAM START (Rime AI - PCM)`);
     
-    // Send start event to frontend
     ws.send(JSON.stringify({
       type: 'audio-start',
       timestamp: Date.now(),
       t0: t0
     }));
     
-    // Call Rime API
     const response = await fetch('https://users.rime.ai/v1/rime-tts', {
       method: 'POST',
       headers: {
-        'Accept': 'audio/mp3',
+        'Accept': 'audio/wav',  // ← Changed to WAV (PCM)
         'Authorization': `Bearer ${RIME_API_KEY}`,
         'Content-Type': 'application/json'
       },
@@ -648,6 +643,7 @@ async function convertToSpeechRimeStreaming(sessionId, text, t0) {
         text: text,
         modelId: 'arcana',
         samplingRate: 24000,
+        audioFormat: 'pcm_16000',  // ← Added PCM format
         temperature: 0.5,
         top_p: 1,
         repetition_penalty: 1.5,
@@ -660,12 +656,11 @@ async function convertToSpeechRimeStreaming(sessionId, text, t0) {
       throw new Error(`Rime API error: ${response.status} - ${errorText}`);
     }
     
-    // Stream audio chunks to frontend as they arrive
     const reader = response.body.getReader();
     let totalBytes = 0;
     let chunkCount = 0;
     
-    console.log('📡 Starting to stream audio chunks...');
+    console.log('📡 Starting to stream PCM audio chunks...');
     
     while (true) {
       const { done, value } = await reader.read();
@@ -675,37 +670,33 @@ async function convertToSpeechRimeStreaming(sessionId, text, t0) {
         break;
       }
       
-      // Convert chunk to base64
       const base64Chunk = Buffer.from(value).toString('base64');
       totalBytes += value.length;
       chunkCount++;
       
-      // Send chunk immediately to frontend via WebSocket
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({
           type: 'audio-chunk',
           data: base64Chunk,
-          format: 'mp3',
+          format: 'pcm',  // ← Changed to PCM
           chunkNumber: chunkCount,
           chunkSize: value.length,
+          sampleRate: 24000,
           t0: t0
         }));
         
-        console.log(`📦 Sent chunk ${chunkCount} (${value.length} bytes)`);
+        console.log(`📦 Sent PCM chunk ${chunkCount} (${value.length} bytes)`);
       } else {
         console.warn('⚠️ WebSocket closed during streaming');
         break;
       }
       
-      // Log first chunk timing (this is when user starts hearing audio!)
       if (chunkCount === 1) {
         const firstChunkTime = Date.now();
         console.log(`⚡ FIRST CHUNK sent in ${firstChunkTime - t_tts_start}ms!`);
-        console.log(`   User will hear audio now!`);
       }
     }
     
-    // Send end event
     if (ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({
         type: 'audio-end',
@@ -716,17 +707,13 @@ async function convertToSpeechRimeStreaming(sessionId, text, t0) {
     }
     
     const t_tts_end = Date.now();
-    console.log(`[${t_tts_end - t0}ms] TTS STREAM END (Rime AI)`);
+    console.log(`[${t_tts_end - t0}ms] TTS STREAM END (Rime AI - PCM)`);
     console.log(`   Total streaming time: ${t_tts_end - t_tts_start}ms`);
-    
-    // Note: audioPlayingStatus will be cleared when frontend sends 'audio-finished'
     
   } catch (error) {
     console.error('RIME AI STREAMING ERROR:', error.message);
-    console.error('Full error:', error);
     audioPlayingStatus.set(sessionId, false);
     
-    // Send error to frontend
     const ws = wsConnections.get(sessionId);
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({
