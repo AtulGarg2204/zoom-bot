@@ -133,7 +133,7 @@ const conversationHistory = new Map();
 const processedEvents = new Map();
 const incompleteTranscripts = new Map();
 const audioPlayingStatus = new Map();
-
+const ttsQueue = new Map(); // ← ADD THIS LINE
 // Store active calendar channel info
 let calendarChannelId = null;
 let calendarResourceId = null;
@@ -164,7 +164,6 @@ async function processWithLLMContextAware(sessionId, t0) {
     
     const history = conversationHistory.get(sessionId);
     
-    // Build conversation context with speaker labels
     const conversationContext = history.map(msg => {
       return `${msg.speaker}: ${msg.content}`;
     }).join('\n');
@@ -172,9 +171,9 @@ async function processWithLLMContextAware(sessionId, t0) {
     const t_llm_start = Date.now();
     
     console.log('\n' + '🤖'.repeat(40));
-    console.log('🤖 LLM CONTEXT-AWARE PROCESSING (GROQ + LLAMA)');
+    console.log('🤖 LLM STREAMING WITH SENTENCE BUFFERING');
     console.log('🤖'.repeat(40));
-    console.log(`\n⏱️  [${t_llm_start - t0}ms] Groq LLM Request Starting...`);
+    console.log(`\n⏱️  [${t_llm_start - t0}ms] Groq LLM Streaming Request Starting...`);
     console.log('🦙 Model: Llama 4 Maverick 17B');
     
     console.log('\n📜 CONVERSATION CONTEXT SENT TO LLM:');
@@ -192,12 +191,12 @@ async function processWithLLMContextAware(sessionId, t0) {
     console.log(`   Total messages in context: ${history.length}`);
     console.log(`   Context length: ${conversationContext.length} characters`);
     
-   const response = await groq.chat.completions.create({
-  model: 'meta-llama/llama-4-maverick-17b-128e-instruct',
-  messages: [
-    {
-      role: 'system',
-      content: `You are James, a friendly and helpful AI Assistant in a natural conversation. Speakers are labeled as Speaker 0, Speaker 1, etc.
+    const response = await groq.chat.completions.create({
+      model: 'meta-llama/llama-4-maverick-17b-128e-instruct',
+      messages: [
+        {
+          role: 'system',
+          content: `You are James, a friendly and helpful AI Assistant in a natural conversation. Speakers are labeled as Speaker 0, Speaker 1, etc.
 
 YOUR IDENTITY:
 - Your name is James
@@ -224,44 +223,13 @@ WHEN TO RESPOND:
 4. People talking to each other → Say only "SILENT"
 5. Unclear who is being addressed → Say only "SILENT"
 
-EXAMPLES OF NATURAL RESPONSES:
-
-Question: "Hey bot, what's 2+2?"
-❌ Bad: "Four."
-✅ Good: "Oh, that's four!"
-✅ Good: "It's four."
-✅ Good: "That'd be four."
-
-Question: "How are you?"
-❌ Bad: "I'm well, thanks."
-✅ Good: "I'm doing great, thanks for asking! How about you?"
-✅ Good: "Pretty good! Thanks for asking."
-✅ Good: "I'm wonderful, thank you!"
-
-Question: "What do you know about cricket?"
-❌ Bad: "It's a bat-and-ball sport."
-✅ Good: "Oh, cricket! It's a bat-and-ball sport played between two teams."
-✅ Good: "Well, cricket is a really popular sport, especially in countries like India and England."
-✅ Good: "Cricket's a fascinating game with two teams competing in innings."
-
-Question: "What's your name?"
-❌ Bad: "I'm an AI Assistant."
-✅ Good: "I'm an AI assistant here to help! You can just call me 'bot' or 'assistant'."
-✅ Good: "You can call me your AI assistant! I'm here to help with anything you need."
-
-Question: "Can you help me?"
-❌ Bad: "Yes."
-✅ Good: "Of course! I'd be happy to help. What do you need?"
-✅ Good: "Absolutely! What can I do for you?"
-✅ Good: "Sure thing! How can I assist?"
-
 IMPORTANT:
 - Be natural, not robotic
 - Show personality while staying helpful
 - Keep it conversational but concise (10-20 words)
 - Never say "Yes, I should respond" or explain your reasoning
 - If conversation is between others, just say "SILENT"`
-    },
+        },
         {
           role: 'user',
           content: `Conversation:\n${conversationContext}\n\nIf conversation is between others, say "SILENT". If you should respond, give ONLY your answer.`
@@ -269,31 +237,94 @@ IMPORTANT:
       ],
       max_completion_tokens: 300,
       temperature: 0.5,
-      top_p: 1
+      top_p: 1,
+      stream: true  // ← ENABLE STREAMING
     });
     
-    const llmResponse = response.choices[0].message.content.trim();
+    console.log('\n🌊 STREAMING MODE - Buffering sentences...');
+    console.log('-'.repeat(80));
+    
+    if (!ttsQueue.has(sessionId)) {
+      ttsQueue.set(sessionId, { queue: [], isProcessing: false });
+    }
+    
+    let llmResponse = '';
+    let sentenceBuffer = '';
+    let tokenCount = 0;
+    let firstTokenTime = null;
+    let sentenceCount = 0;
+    
+    for await (const chunk of response) {
+      const token = chunk.choices[0]?.delta?.content || '';
+      
+      if (token) {
+        tokenCount++;
+        
+        if (!firstTokenTime) {
+          firstTokenTime = Date.now();
+          console.log(`\n⚡ FIRST TOKEN received in ${firstTokenTime - t_llm_start}ms!`);
+          console.log('📝 Building sentences...\n');
+        }
+        
+        llmResponse += token;
+        sentenceBuffer += token;
+        
+        console.log(`📦 Token ${tokenCount}: "${token}"`);
+        
+        // Check if sentence ended (. ! ?)
+        if (token.includes('.') || token.includes('!') || token.includes('?')) {
+          sentenceCount++;
+          console.log(`\n✅ SENTENCE ${sentenceCount} COMPLETE: "${sentenceBuffer.trim()}"`);
+          console.log(`   Adding to TTS queue...\n`);
+          
+          const queueData = ttsQueue.get(sessionId);
+          queueData.queue.push({ text: sentenceBuffer.trim(), t0: t0 });
+          
+          if (!queueData.isProcessing) {
+            processTTSQueue(sessionId);
+          }
+          
+          sentenceBuffer = '';
+        }
+      }
+    }
+    
+    // Handle any remaining text (if no punctuation at end)
+    if (sentenceBuffer.trim().length > 0) {
+      sentenceCount++;
+      console.log(`\n✅ FINAL SENTENCE ${sentenceCount}: "${sentenceBuffer.trim()}"`);
+      console.log(`   Adding to TTS queue...\n`);
+      
+      const queueData = ttsQueue.get(sessionId);
+      queueData.queue.push({ text: sentenceBuffer.trim(), t0: t0 });
+      
+      if (!queueData.isProcessing) {
+        processTTSQueue(sessionId);
+      }
+    }
     
     const t_llm_end = Date.now();
-    console.log(`\n⏱️  [${t_llm_end - t0}ms] Groq Response Received`);
-    console.log(`⏱️  Groq took: ${t_llm_end - t_llm_start}ms ⚡`);
-    console.log(`📊 Tokens used: ${response.usage.total_tokens}`);
-    console.log(`📊 Prompt tokens: ${response.usage.prompt_tokens}`);
-    console.log(`📊 Completion tokens: ${response.usage.completion_tokens}`);
+    console.log('\n' + '-'.repeat(80));
+    console.log(`\n⏱️  [${t_llm_end - t0}ms] Groq Streaming Complete`);
+    console.log(`⏱️  Total LLM time: ${t_llm_end - t_llm_start}ms`);
+    console.log(`⏱️  Time to first token: ${firstTokenTime - t_llm_start}ms ⚡`);
+    console.log(`📊 Total tokens: ${tokenCount}`);
+    console.log(`📊 Total sentences: ${sentenceCount}`);
+    console.log(`📊 Complete response: "${llmResponse}"`);
     
     console.log('\n💭 LLM DECISION:');
     console.log('┌' + '─'.repeat(78) + '┐');
     console.log('│ ' + llmResponse.padEnd(77) + '│');
     console.log('└' + '─'.repeat(78) + '┘');
     
-    // Check if LLM decided to respond or stay silent
     const isSilent = llmResponse.toUpperCase() === 'SILENT' || 
                      llmResponse.toUpperCase().startsWith('SILENT');
     
     if (isSilent) {
       console.log('\n🤫 DECISION: STAY SILENT');
       console.log('   Reason: Conversation between other participants');
-      console.log('   Action: No speech generation');
+      
+      ttsQueue.get(sessionId).queue = [];
       
       const channel = `session-${sessionId}`;
       pusher.trigger(channel, 'bot-silent', {
@@ -306,10 +337,8 @@ IMPORTANT:
       return;
     }
     
-    // LLM decided to respond
     console.log('\n✅ DECISION: RESPOND');
     console.log(`   Response: "${llmResponse}"`);
-    console.log('   Action: Generate speech and send to user');
     
     const channel = `session-${sessionId}`;
     
@@ -321,16 +350,10 @@ IMPORTANT:
     console.log('\n📚 UPDATING CONVERSATION HISTORY:');
     console.log(`   Before: ${history.length} messages`);
     
-    // Add bot's response to history
     addToHistory(sessionId, 'AI Assistant', llmResponse);
     
     console.log(`   After: ${conversationHistory.get(sessionId).length} messages`);
     console.log(`   Added: AI Assistant: "${llmResponse}"`);
-    
-    console.log('\n🔊 STARTING TEXT-TO-SPEECH CONVERSION...');
-    console.log('-'.repeat(80));
-    
- convertToSpeechRimeStreaming(sessionId, llmResponse, t0);
     
     console.log('\n' + '='.repeat(80) + '\n');
     
@@ -339,6 +362,190 @@ IMPORTANT:
     console.error('Full error:', error);
     console.log('\n' + '='.repeat(80) + '\n');
   }
+}
+async function processTTSQueue(sessionId) {
+  const queueData = ttsQueue.get(sessionId);
+  
+  if (!queueData || queueData.isProcessing) {
+    return;
+  }
+  
+  queueData.isProcessing = true;
+  
+  console.log('\n🎬 TTS QUEUE PROCESSOR STARTED (PARALLEL MODE)');
+  console.log(`   Queue size: ${queueData.queue.length} sentences`);
+  
+  let audioReadyQueue = [];
+  let currentlyGenerating = null;
+  
+  while (queueData.queue.length > 0 || currentlyGenerating || audioReadyQueue.length > 0) {
+    
+    if (queueData.queue.length > 0 && !currentlyGenerating) {
+      const item = queueData.queue.shift();
+      console.log(`\n🔄 Starting TTS generation: "${item.text}"`);
+      console.log(`   Remaining in queue: ${queueData.queue.length}`);
+      
+      currentlyGenerating = generateTTSInBackground(sessionId, item.text, item.t0)
+        .then(audioData => {
+          console.log(`✅ TTS ready: "${item.text}" (${audioData.chunks.length} chunks)`);
+          audioReadyQueue.push(audioData);
+          currentlyGenerating = null;
+        })
+        .catch(error => {
+          console.error(`❌ TTS generation failed for "${item.text}":`, error.message);
+          currentlyGenerating = null;
+        });
+    }
+    
+    if (audioReadyQueue.length > 0) {
+      const audioData = audioReadyQueue.shift();
+      
+      console.log(`\n🔊 Playing: "${audioData.text}"`);
+      console.log(`   Audio ready queue: ${audioReadyQueue.length}`);
+      console.log(`   Currently generating: ${currentlyGenerating ? 'Yes' : 'No'}`);
+      
+      await sendAudioChunksToFrontend(sessionId, audioData);
+      
+      await waitForAudioPlayback(sessionId, audioData.text);
+      
+      console.log(`✅ Finished playing: "${audioData.text}"`);
+    }
+    
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  
+  queueData.isProcessing = false;
+  console.log('\n🎬 TTS QUEUE PROCESSOR FINISHED\n');
+}
+
+async function generateTTSInBackground(sessionId, text, t0) {
+  return new Promise(async (resolve, reject) => {
+    try {
+      if (!RIME_API_KEY) {
+        reject(new Error('Rime API key not configured'));
+        return;
+      }
+      
+      const t_tts_start = Date.now();
+      console.log(`[${t_tts_start - t0}ms] 🎙️ TTS Generation Start: "${text}"`);
+      
+      const response = await fetch('https://users.rime.ai/v1/rime-tts', {
+        method: 'POST',
+        headers: {
+          'Accept': 'audio/wav',
+          'Authorization': `Bearer ${RIME_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          speaker: 'orion',
+          text: text,
+          modelId: 'arcana',
+          samplingRate: 24000,
+          audioFormat: 'pcm_16000',
+          temperature: 0.5,
+          top_p: 1,
+          repetition_penalty: 1.5,
+          max_tokens: 1200
+        })
+      });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        reject(new Error(`Rime API error: ${response.status} - ${errorText}`));
+        return;
+      }
+      
+      const reader = response.body.getReader();
+      const chunks = [];
+      let totalBytes = 0;
+      
+      while (true) {
+        const { done, value } = await reader.read();
+        
+        if (done) break;
+        
+        const base64Chunk = Buffer.from(value).toString('base64');
+        chunks.push({
+          data: base64Chunk,
+          size: value.length
+        });
+        totalBytes += value.length;
+      }
+      
+      const t_tts_end = Date.now();
+      console.log(`[${t_tts_end - t0}ms] ✅ TTS Generation Complete: "${text}" (${t_tts_end - t_tts_start}ms)`);
+      
+      resolve({
+        text: text,
+        chunks: chunks,
+        totalChunks: chunks.length,
+        totalBytes: totalBytes,
+        t0: t0
+      });
+      
+    } catch (error) {
+      reject(error);
+    }
+  });
+}
+
+async function sendAudioChunksToFrontend(sessionId, audioData) {
+  const ws = wsConnections.get(sessionId);
+  
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    console.warn('⚠️ No active WebSocket connection');
+    return;
+  }
+  
+  audioPlayingStatus.set(sessionId, true);
+  
+  ws.send(JSON.stringify({
+    type: 'audio-start',
+    timestamp: Date.now(),
+    t0: audioData.t0
+  }));
+  
+  for (let i = 0; i < audioData.chunks.length; i++) {
+    const chunk = audioData.chunks[i];
+    
+    ws.send(JSON.stringify({
+      type: 'audio-chunk',
+      data: chunk.data,
+      format: 'pcm',
+      chunkNumber: i + 1,
+      chunkSize: chunk.size,
+      sampleRate: 24000,
+      t0: audioData.t0
+    }));
+  }
+  
+  ws.send(JSON.stringify({
+    type: 'audio-end',
+    totalChunks: audioData.totalChunks,
+    totalBytes: audioData.totalBytes,
+    timestamp: Date.now()
+  }));
+  
+  console.log(`📤 Sent ${audioData.chunks.length} chunks to frontend for: "${audioData.text}"`);
+}
+
+async function waitForAudioPlayback(sessionId, text) {
+  return new Promise((resolve) => {
+    const checkInterval = setInterval(() => {
+      const isPlaying = audioPlayingStatus.get(sessionId);
+      if (!isPlaying) {
+        clearInterval(checkInterval);
+        console.log(`🎵 Playback finished: "${text}"`);
+        resolve();
+      }
+    }, 50);
+    
+    setTimeout(() => {
+      clearInterval(checkInterval);
+      console.log(`⏱️ Playback timeout for: "${text}"`);
+      resolve();
+    }, 30000);
+  });
 }
 // async function processWithLLMContextAware(sessionId, t0) {
 //   try {
