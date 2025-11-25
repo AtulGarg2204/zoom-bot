@@ -254,54 +254,70 @@ IMPORTANT:
     let firstTokenTime = null;
     let sentenceCount = 0;
     
-    for await (const chunk of response) {
-      const token = chunk.choices[0]?.delta?.content || '';
-      
-      if (token) {
-        tokenCount++;
-        
-        if (!firstTokenTime) {
-          firstTokenTime = Date.now();
-          console.log(`\n⚡ FIRST TOKEN received in ${firstTokenTime - t_llm_start}ms!`);
-          console.log('📝 Building sentences...\n');
-        }
-        
-        llmResponse += token;
-        sentenceBuffer += token;
-        
-        console.log(`📦 Token ${tokenCount}: "${token}"`);
-        
-        // Check if sentence ended (. ! ?)
-        if (token.includes('.') || token.includes('!') || token.includes('?')) {
-          sentenceCount++;
-          console.log(`\n✅ SENTENCE ${sentenceCount} COMPLETE: "${sentenceBuffer.trim()}"`);
-          console.log(`   Adding to TTS queue...\n`);
-          
-          const queueData = ttsQueue.get(sessionId);
-          queueData.queue.push({ text: sentenceBuffer.trim(), t0: t0 });
-          
-          if (!queueData.isProcessing) {
-            processTTSQueue(sessionId);
-          }
-          
-          sentenceBuffer = '';
-        }
-      }
+  for await (const chunk of response) {
+  const token = chunk.choices[0]?.delta?.content || '';
+  
+  if (token) {
+    tokenCount++;
+    
+    if (!firstTokenTime) {
+      firstTokenTime = Date.now();
+      console.log(`\n⚡ FIRST TOKEN received in ${firstTokenTime - t_llm_start}ms!`);
+      console.log('📝 Building sentences...\n');
     }
     
-    // Handle any remaining text (if no punctuation at end)
-    if (sentenceBuffer.trim().length > 0) {
+    llmResponse += token;
+    sentenceBuffer += token;
+    
+    console.log(`📦 Token ${tokenCount}: "${token}"`);
+    
+    // Check if sentence ended (. ! ?)
+    if (token.includes('.') || token.includes('!') || token.includes('?')) {
       sentenceCount++;
-      console.log(`\n✅ FINAL SENTENCE ${sentenceCount}: "${sentenceBuffer.trim()}"`);
-      console.log(`   Adding to TTS queue...\n`);
+      console.log(`\n✅ SENTENCE ${sentenceCount} COMPLETE: "${sentenceBuffer.trim()}"`);
       
-      const queueData = ttsQueue.get(sessionId);
-      queueData.queue.push({ text: sentenceBuffer.trim(), t0: t0 });
-      
-      if (!queueData.isProcessing) {
-        processTTSQueue(sessionId);
+      // Don't add to queue if it's SILENT command
+      const trimmedSentence = sentenceBuffer.trim();
+      if (trimmedSentence.toUpperCase() !== 'SILENT' && 
+          !trimmedSentence.toUpperCase().startsWith('SILENT')) {
+        console.log(`   Adding to TTS queue...\n`);
+        
+        const queueData = ttsQueue.get(sessionId);
+        queueData.queue.push({ text: trimmedSentence, t0: t0 });
+        
+        if (!queueData.isProcessing) {
+          processTTSQueue(sessionId);
+        }
+      } else {
+        console.log(`   ⚠️ Skipping SILENT command (not adding to TTS queue)\n`);
       }
+      
+      sentenceBuffer = '';
     }
+  }
+}
+
+// Handle any remaining text (if no punctuation at end)
+if (sentenceBuffer.trim().length > 0) {
+  sentenceCount++;
+  const trimmedSentence = sentenceBuffer.trim();
+  console.log(`\n✅ FINAL SENTENCE ${sentenceCount}: "${trimmedSentence}"`);
+  
+  // Don't add to queue if it's SILENT command
+  if (trimmedSentence.toUpperCase() !== 'SILENT' && 
+      !trimmedSentence.toUpperCase().startsWith('SILENT')) {
+    console.log(`   Adding to TTS queue...\n`);
+    
+    const queueData = ttsQueue.get(sessionId);
+    queueData.queue.push({ text: trimmedSentence, t0: t0 });
+    
+    if (!queueData.isProcessing) {
+      processTTSQueue(sessionId);
+    }
+  } else {
+    console.log(`   ⚠️ Skipping SILENT command (not adding to TTS queue)\n`);
+  }
+}
     
     const t_llm_end = Date.now();
     console.log('\n' + '-'.repeat(80));
@@ -320,23 +336,32 @@ IMPORTANT:
     const isSilent = llmResponse.toUpperCase() === 'SILENT' || 
                      llmResponse.toUpperCase().startsWith('SILENT');
     
-    if (isSilent) {
-      console.log('\n🤫 DECISION: STAY SILENT');
-      console.log('   Reason: Conversation between other participants');
-      
-      ttsQueue.get(sessionId).queue = [];
-      
-      const channel = `session-${sessionId}`;
-      pusher.trigger(channel, 'bot-silent', {
-        message: 'Bot is listening but not responding'
-      }).catch(err => console.error('Pusher error:', err));
-      
-      console.log('   ✅ Sent "bot-silent" event to frontend');
-      console.log('\n' + '='.repeat(80) + '\n');
-      
-      return;
-    }
-    
+   if (isSilent) {
+  console.log('\n🤫 DECISION: STAY SILENT');
+  console.log('   Reason: Conversation between other participants');
+  
+  // Clear the queue AND stop processing
+  const queueData = ttsQueue.get(sessionId);
+  if (queueData) {
+    queueData.queue = [];
+    queueData.isProcessing = false;  // ← STOP the processor!
+    console.log('   🛑 Stopped TTS queue processor');
+  }
+  
+  // Clear audio playing flag (in case audio was already streaming)
+  audioPlayingStatus.set(sessionId, false);
+  console.log('   🔇 Cleared audio playing status');
+  
+  const channel = `session-${sessionId}`;
+  pusher.trigger(channel, 'bot-silent', {
+    message: 'Bot is listening but not responding'
+  }).catch(err => console.error('Pusher error:', err));
+  
+  console.log('   ✅ Sent "bot-silent" event to frontend');
+  console.log('\n' + '='.repeat(80) + '\n');
+  
+  return;
+}
     console.log('\n✅ DECISION: RESPOND');
     console.log(`   Response: "${llmResponse}"`);
     
@@ -387,7 +412,7 @@ async function processTTSQueue(sessionId) {
       
       currentlyGenerating = generateTTSInBackground(sessionId, item.text, item.t0)
         .then(audioData => {
-          console.log(`✅ TTS ready: "${item.text}" (${audioData.chunks.length} chunks)`);
+          console.log(`✅ TTS ready: "${item.text}" (${audioData.totalChunks} chunks)`);
           audioReadyQueue.push(audioData);
           currentlyGenerating = null;
         })
@@ -404,7 +429,7 @@ async function processTTSQueue(sessionId) {
       console.log(`   Audio ready queue: ${audioReadyQueue.length}`);
       console.log(`   Currently generating: ${currentlyGenerating ? 'Yes' : 'No'}`);
       
-      await sendAudioChunksToFrontend(sessionId, audioData);
+      
       
       await waitForAudioPlayback(sessionId, audioData.text);
       
@@ -426,8 +451,25 @@ async function generateTTSInBackground(sessionId, text, t0) {
         return;
       }
       
+      const ws = wsConnections.get(sessionId);
+      
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        reject(new Error('No active WebSocket connection'));
+        return;
+      }
+      
       const t_tts_start = Date.now();
       console.log(`[${t_tts_start - t0}ms] 🎙️ TTS Generation Start: "${text}"`);
+      
+      // Set audio playing flag
+      audioPlayingStatus.set(sessionId, true);
+      
+      // Send audio-start
+      ws.send(JSON.stringify({
+        type: 'audio-start',
+        timestamp: Date.now(),
+        t0: t0
+      }));
       
       const response = await fetch('https://users.rime.ai/v1/rime-tts', {
         method: 'POST',
@@ -456,34 +498,72 @@ async function generateTTSInBackground(sessionId, text, t0) {
       }
       
       const reader = response.body.getReader();
-      const chunks = [];
       let totalBytes = 0;
+      let chunkCount = 0;
       
+      console.log('📡 Starting to stream PCM audio chunks...');
+      
+      // STREAM chunks as they arrive (don't wait for all)!
       while (true) {
         const { done, value } = await reader.read();
         
-        if (done) break;
+        if (done) {
+          console.log(`✅ Stream complete: ${chunkCount} chunks, ${totalBytes} bytes`);
+          break;
+        }
         
         const base64Chunk = Buffer.from(value).toString('base64');
-        chunks.push({
-          data: base64Chunk,
-          size: value.length
-        });
         totalBytes += value.length;
+        chunkCount++;
+        
+        // Send chunk IMMEDIATELY to frontend
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({
+            type: 'audio-chunk',
+            data: base64Chunk,
+            format: 'pcm',
+            chunkNumber: chunkCount,
+            chunkSize: value.length,
+            sampleRate: 24000,
+            t0: t0
+          }));
+          
+          if (chunkCount === 1) {
+            const firstChunkTime = Date.now();
+            console.log(`⚡ FIRST CHUNK sent in ${firstChunkTime - t_tts_start}ms!`);
+          }
+          
+          if (chunkCount % 10 === 0) {
+            console.log(`📦 Sent ${chunkCount} chunks so far...`);
+          }
+        } else {
+          console.warn('⚠️ WebSocket closed during streaming');
+          break;
+        }
+      }
+      
+      // Send audio-end
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          type: 'audio-end',
+          totalChunks: chunkCount,
+          totalBytes: totalBytes,
+          timestamp: Date.now()
+        }));
       }
       
       const t_tts_end = Date.now();
-      console.log(`[${t_tts_end - t0}ms] ✅ TTS Generation Complete: "${text}" (${t_tts_end - t_tts_start}ms)`);
+      console.log(`[${t_tts_end - t0}ms] ✅ TTS Complete: "${text}" (${t_tts_end - t_tts_start}ms, ${chunkCount} chunks)`);
       
       resolve({
         text: text,
-        chunks: chunks,
-        totalChunks: chunks.length,
+        totalChunks: chunkCount,
         totalBytes: totalBytes,
         t0: t0
       });
       
     } catch (error) {
+      audioPlayingStatus.set(sessionId, false);
       reject(error);
     }
   });
