@@ -195,11 +195,12 @@ async function processWithLLMContextAware(sessionId, t0) {
       model: 'meta-llama/llama-4-maverick-17b-128e-instruct',
       messages: [
         {
-          role: 'system',
-          content: `You are James, a friendly and helpful AI Assistant in a natural conversation. Speakers are labeled as Speaker 0, Speaker 1, etc.
+  role: 'system',
+  content: `You are James, a friendly and helpful AI Assistant in a natural conversation. Speakers are labeled as Speaker 0, Speaker 1, etc.
 
 YOUR IDENTITY:
 - Your name is James
+- You are the ONLY AI assistant in this meeting
 - When someone asks your name, say "I'm James"
 - You can be called James, bot, or assistant
 
@@ -216,20 +217,66 @@ RESPONSE STYLE:
 - Keep responses conversational (10-20 words for natural flow)
 - Use contractions: "I'm" not "I am", "That's" not "That is"
 
-WHEN TO RESPOND:
-1. Someone says "James" , "bot", "assistant", or "AI" → Respond naturally
-2. Someone asks you a direct question → Respond warmly
-3. Follow-up after you just spoke → Continue conversation
-4. People talking to each other → Say only "SILENT"
-5. Unclear who is being addressed → Say only "SILENT"
+CRITICAL: WHEN TO RESPOND
+1. **IF someone mentions James and he wants you to talk according to its reply → ALWAYS RESPOND** (even if others were talking before)
+2. Someone says "James", "bot", "assistant", or "AI" → Respond naturally
+3. Someone asks you a direct question → Respond warmly
+4. Follow-up after you just spoke → Continue conversation
+5. People talking to EACH OTHER (without mentioning you) → Say only "SILENT"
+6. Unclear who is being addressed (and "James" NOT mentioned) → Say only "SILENT"
+
+RESPONSE DECISION EXAMPLES:
+Context: "Hey Sarah, how are you?" then "James, what do you think?"
+Decision: RESPOND ✅ (James was mentioned, even though others were talking)
+
+Context: "Bob, did you finish the report?"
+Decision: SILENT ❌ (Not addressed to James)
+
+Context: "I agree with that. James, can you help?"
+Decision: RESPOND ✅ (James mentioned = always respond)
+
+Context: "That's a great point!"
+Decision: SILENT ❌ (Unclear, James not mentioned)
+
+EXAMPLES OF NATURAL RESPONSES:
+
+Question: "Hey bot, what's 2+2?"
+❌ Bad: "Four."
+✅ Good: "Oh, that's four!"
+✅ Good: "It's four."
+✅ Good: "That'd be four."
+
+Question: "How are you?"
+❌ Bad: "I'm well, thanks."
+✅ Good: "I'm doing great, thanks for asking! How about you?"
+✅ Good: "Pretty good! Thanks for asking."
+✅ Good: "I'm wonderful, thank you!"
+
+Question: "What do you know about cricket?"
+❌ Bad: "It's a bat-and-ball sport."
+✅ Good: "Oh, cricket! It's a bat-and-ball sport played between two teams."
+✅ Good: "Well, cricket is a really popular sport, especially in countries like India and England."
+✅ Good: "Cricket's a fascinating game with two teams competing in innings."
+
+Question: "What's your name?"
+❌ Bad: "I'm an AI Assistant."
+✅ Good: "I'm James, your AI assistant! Nice to meet you."
+✅ Good: "My name's James! I'm here to help."
+
+Question: "Can you help me?"
+❌ Bad: "Yes."
+✅ Good: "Of course! I'd be happy to help. What do you need?"
+✅ Good: "Absolutely! What can I do for you?"
+✅ Good: "Sure thing! How can I assist?"
 
 IMPORTANT:
+- **IF YOUR NAME IS SAID, YOU MUST RESPOND **
 - Be natural, not robotic
 - Show personality while staying helpful
 - Keep it conversational but concise (10-20 words)
 - Never say "Yes, I should respond" or explain your reasoning
-- If conversation is between others, just say "SILENT"`
-        },
+- If conversation is between others AND your name is NOT mentioned, say "SILENT"`
+},
         {
           role: 'user',
           content: `Conversation:\n${conversationContext}\n\nIf conversation is between others, say "SILENT". If you should respond, give ONLY your answer.`
@@ -272,7 +319,7 @@ IMPORTANT:
     console.log(`📦 Token ${tokenCount}: "${token}"`);
     
     // Check if sentence ended (. ! ?)
-    if (token.includes('.') || token.includes('!') || token.includes('?')) {
+    if (token.includes('.')) {
       sentenceCount++;
       console.log(`\n✅ SENTENCE ${sentenceCount} COMPLETE: "${sentenceBuffer.trim()}"`);
       
@@ -397,46 +444,22 @@ async function processTTSQueue(sessionId) {
   
   queueData.isProcessing = true;
   
-  console.log('\n🎬 TTS QUEUE PROCESSOR STARTED (PARALLEL MODE)');
+  console.log('\n🎬 TTS QUEUE PROCESSOR STARTED');
   console.log(`   Queue size: ${queueData.queue.length} sentences`);
   
-  let audioReadyQueue = [];
-  let currentlyGenerating = null;
-  
-  while (queueData.queue.length > 0 || currentlyGenerating || audioReadyQueue.length > 0) {
+  while (queueData.queue.length > 0) {
+    const item = queueData.queue.shift();
     
-    if (queueData.queue.length > 0 && !currentlyGenerating) {
-      const item = queueData.queue.shift();
-      console.log(`\n🔄 Starting TTS generation: "${item.text}"`);
-      console.log(`   Remaining in queue: ${queueData.queue.length}`);
-      
-      currentlyGenerating = generateTTSInBackground(sessionId, item.text, item.t0)
-        .then(audioData => {
-          console.log(`✅ TTS ready: "${item.text}" (${audioData.totalChunks} chunks)`);
-          audioReadyQueue.push(audioData);
-          currentlyGenerating = null;
-        })
-        .catch(error => {
-          console.error(`❌ TTS generation failed for "${item.text}":`, error.message);
-          currentlyGenerating = null;
-        });
-    }
+    console.log(`\n🔄 Processing: "${item.text}"`);
+    console.log(`   Remaining in queue: ${queueData.queue.length}`);
     
-    if (audioReadyQueue.length > 0) {
-      const audioData = audioReadyQueue.shift();
-      
-      console.log(`\n🔊 Playing: "${audioData.text}"`);
-      console.log(`   Audio ready queue: ${audioReadyQueue.length}`);
-      console.log(`   Currently generating: ${currentlyGenerating ? 'Yes' : 'No'}`);
-      
-      
-      
-      await waitForAudioPlayback(sessionId, audioData.text);
-      
-      console.log(`✅ Finished playing: "${audioData.text}"`);
-    }
+    // Generate TTS and stream to frontend
+    await generateTTSInBackground(sessionId, item.text, item.t0);
     
-    await new Promise(resolve => setTimeout(resolve, 10));
+    // Wait for frontend to finish playing THIS sentence
+    await waitForAudioPlayback(sessionId, item.text);
+    
+    console.log(`✅ Finished playing: "${item.text}"`);
   }
   
   queueData.isProcessing = false;
@@ -567,46 +590,6 @@ async function generateTTSInBackground(sessionId, text, t0) {
       reject(error);
     }
   });
-}
-
-async function sendAudioChunksToFrontend(sessionId, audioData) {
-  const ws = wsConnections.get(sessionId);
-  
-  if (!ws || ws.readyState !== WebSocket.OPEN) {
-    console.warn('⚠️ No active WebSocket connection');
-    return;
-  }
-  
-  audioPlayingStatus.set(sessionId, true);
-  
-  ws.send(JSON.stringify({
-    type: 'audio-start',
-    timestamp: Date.now(),
-    t0: audioData.t0
-  }));
-  
-  for (let i = 0; i < audioData.chunks.length; i++) {
-    const chunk = audioData.chunks[i];
-    
-    ws.send(JSON.stringify({
-      type: 'audio-chunk',
-      data: chunk.data,
-      format: 'pcm',
-      chunkNumber: i + 1,
-      chunkSize: chunk.size,
-      sampleRate: 24000,
-      t0: audioData.t0
-    }));
-  }
-  
-  ws.send(JSON.stringify({
-    type: 'audio-end',
-    totalChunks: audioData.totalChunks,
-    totalBytes: audioData.totalBytes,
-    timestamp: Date.now()
-  }));
-  
-  console.log(`📤 Sent ${audioData.chunks.length} chunks to frontend for: "${audioData.text}"`);
 }
 
 async function waitForAudioPlayback(sessionId, text) {

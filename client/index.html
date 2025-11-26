@@ -142,8 +142,8 @@
     <script src="https://js.pusher.com/8.2.0/pusher.min.js"></script>
     <script>
         const params = new URLSearchParams(window.location.search);
-        const SERVER_URL = params.get('server') || 'https://zoom-bot-pgyj.onrender.com';
-        // const SERVER_URL = params.get('server') || 'http://localhost:3000';
+        // const SERVER_URL = params.get('server') || 'https://zoom-bot-pgyj.onrender.com';
+        const SERVER_URL = params.get('server') || 'http://localhost:3000';
         const PUSHER_KEY = params.get('pusher_key') || '53efc497795d6002deb2';
         const PUSHER_CLUSTER = params.get('pusher_cluster') || 'ap2';
         
@@ -239,15 +239,25 @@
                                 console.log('✅ WebSocket connection confirmed');
                                 break;
                                 
-                            case 'audio-start':
-                                console.log('🎵 Audio stream starting...');
-                                audioQueue = [];
-                                nextStartTime = 0;
-                                isScheduling = false;
-                                streamEnded = false;
-                                lastScheduledSource = null;
-                                showNotification('🎵 Receiving audio...');
-                                break;
+                          case 'audio-start':
+    console.log('🎵 Audio stream starting...');
+    
+    // Only reset if not currently playing (prevents overlap)
+    const currentTime = audioCtx.currentTime;
+    if (nextStartTime === 0 || nextStartTime <= currentTime) {
+        console.log('🆕 Starting fresh audio playback');
+        audioQueue = [];
+        nextStartTime = 0;
+        isScheduling = false;
+        streamEnded = false;
+        lastScheduledSource = null;
+        showNotification('🎵 Receiving audio...');
+    } else {
+        console.log('📦 Continuing audio playback (additional sentence)');
+        // Don't reset! Keep scheduling after current audio
+        streamEnded = false;
+    }
+    break;
                                 
                             case 'audio-chunk':
                                 console.log(`📦 Received chunk ${message.chunkNumber}`);
@@ -324,79 +334,82 @@
             streamEnded = false;
         }
 
-        async function scheduleAudioChunks() {
-            isScheduling = true;
-            
-            while (audioQueue.length > 0) {
-                const chunkData = audioQueue.shift();
-                const base64Chunk = chunkData.data;
-                const format = chunkData.format;
-                const sampleRate = chunkData.sampleRate;
-                
-                try {
-                    if (audioCtx.state === 'suspended') {
-                        await audioCtx.resume();
-                    }
-                    
-                    const binaryString = atob(base64Chunk);
-                    const len = binaryString.length;
-                    const bytes = new Uint8Array(len);
-                    
-                    for (let i = 0; i < len; i++) {
-                        bytes[i] = binaryString.charCodeAt(i);
-                    }
-                    
-                    let audioBuffer;
-                    
-                    if (format === 'pcm') {
-                        const samples = new Int16Array(bytes.buffer);
-                        const floatSamples = new Float32Array(samples.length);
-                        
-                        for (let i = 0; i < samples.length; i++) {
-                            floatSamples[i] = samples[i] / 32768.0;
-                        }
-                        
-                        audioBuffer = audioCtx.createBuffer(1, floatSamples.length, sampleRate);
-                        audioBuffer.getChannelData(0).set(floatSamples);
-                        
-                    } else {
-                        audioBuffer = await audioCtx.decodeAudioData(bytes.buffer);
-                    }
-                    
-                    const source = audioCtx.createBufferSource();
-                    source.buffer = audioBuffer;
-                    source.connect(audioCtx.destination);
-                    
-                    const currentTime = audioCtx.currentTime;
-                    
-                    if (nextStartTime === 0 || nextStartTime < currentTime) {
-                        nextStartTime = currentTime;
-                    }
-                    
-                    source.start(nextStartTime);
-                    nextStartTime += audioBuffer.duration;
-                    
-                    lastScheduledSource = source;
-                    
-                    const isLastInQueue = audioQueue.length === 0;
-                    
-                    if (streamEnded && isLastInQueue) {
-                        console.log('🎯 This is the final chunk - setting onended');
-                        source.onended = () => {
-                            console.log('✅ Audio playback complete');
-                            sendAudioFinished();
-                        };
-                    }
-                    
-                    console.log(`⏰ Scheduled chunk ${chunkData.chunkNumber} at ${nextStartTime.toFixed(3)}s`);
-                    
-                } catch (error) {
-                    console.error('❌ Decode error:', error);
-                }
+       async function scheduleAudioChunks() {
+    isScheduling = true;
+    
+    while (audioQueue.length > 0) {
+        const chunkData = audioQueue.shift();
+        const base64Chunk = chunkData.data;
+        const format = chunkData.format;
+        const sampleRate = chunkData.sampleRate;
+        
+        try {
+            if (audioCtx.state === 'suspended') {
+                await audioCtx.resume();
             }
             
-            isScheduling = false;
+            const binaryString = atob(base64Chunk);
+            const len = binaryString.length;
+            const bytes = new Uint8Array(len);
+            
+            for (let i = 0; i < len; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+            }
+            
+            let audioBuffer;
+            
+            if (format === 'pcm') {
+                const samples = new Int16Array(bytes.buffer);
+                const floatSamples = new Float32Array(samples.length);
+                
+                for (let i = 0; i < samples.length; i++) {
+                    floatSamples[i] = samples[i] / 32768.0;
+                }
+                
+                audioBuffer = audioCtx.createBuffer(1, floatSamples.length, sampleRate);
+                audioBuffer.getChannelData(0).set(floatSamples);
+                
+            } else {
+                audioBuffer = await audioCtx.decodeAudioData(bytes.buffer);
+            }
+            
+            const source = audioCtx.createBufferSource();
+            source.buffer = audioBuffer;
+            source.connect(audioCtx.destination);
+            
+            const currentTime = audioCtx.currentTime;
+            
+            // CRITICAL FIX: Don't reset if nextStartTime is in the future
+            if (nextStartTime === 0 || nextStartTime < currentTime) {
+                console.log('🆕 Setting start time to current time:', currentTime.toFixed(3));
+                nextStartTime = currentTime;
+            } else {
+                console.log('⏩ Continuing from scheduled time:', nextStartTime.toFixed(3));
+            }
+            
+            source.start(nextStartTime);
+            console.log(`🎵 Scheduled chunk ${chunkData.chunkNumber} at ${nextStartTime.toFixed(3)}s (duration: ${audioBuffer.duration.toFixed(3)}s)`);
+            
+            nextStartTime += audioBuffer.duration;
+            lastScheduledSource = source;
+            
+            const isLastInQueue = audioQueue.length === 0;
+            
+            if (streamEnded && isLastInQueue) {
+                console.log('🎯 This is the final chunk - setting onended');
+                source.onended = () => {
+                    console.log('✅ Audio playback complete');
+                    sendAudioFinished();
+                };
+            }
+            
+        } catch (error) {
+            console.error('❌ Decode error:', error);
         }
+    }
+    
+    isScheduling = false;
+}
 
         // ====================================================================
         // MAIN CONNECTION SETUP
