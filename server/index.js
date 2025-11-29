@@ -2206,21 +2206,28 @@ app.post('/api/connect', async (req, res) => {
     
     dgConnection.on('Results', async(data) => {
   const transcript = data.channel.alternatives[0].transcript;
-  
+   const channel = `session-${sessionId}`;
+  let speakerId = "Unknown";
+    let speakerNumber = null;
   if (transcript && transcript.length > 0) {
     
     // ✅ CHECK: Is audio currently playing?
     const isAudioPlaying = audioPlayingStatus.get(sessionId);
     
-    if (isAudioPlaying) {
-      console.log('\n🔇 AUDIO IS PLAYING - IGNORING TRANSCRIPT');
-      console.log(`   Ignored: "${transcript}"`);
-      console.log(`   Reason: Bot is currently speaking`);
-      return; // Skip all processing
-    }
+   if (isAudioPlaying) {
+  console.log('\n🔇 AUDIO IS PLAYING - SHOWING TRANSCRIPT BUT NOT PROCESSING');
+  
+  // Send transcript to frontend for display
+  pusher.trigger(channel, 'transcript', {
+    text: transcript,
+    speaker: speakerId,
+    blocked: true  // ← Flag to show it was blocked
+  }).catch(err => console.error('Pusher error:', err));
+  
+  return; // ← Still block LLM processing
+}
     
-    let speakerId = "Unknown";
-    let speakerNumber = null;
+    
     
     console.log('\n' + '='.repeat(80));
     console.log('📊 DEEPGRAM RESPONSE RECEIVED');
@@ -2269,7 +2276,7 @@ app.post('/api/connect', async (req, res) => {
         
         console.log('\n' + '-'.repeat(80));
         
-        const channel = `session-${sessionId}`;
+       
         
         pusher.trigger(channel, 'transcript-interim', {
           text: transcript,
@@ -2356,7 +2363,12 @@ if (data.is_final && data.speech_final) {
         } else {
           console.log('\n❌ GPT CONFIRMED: Concatenated text is INCOMPLETE');
           console.log('   📦 Keeping in buffer, waiting for more audio...\n');
-          
+            // Send to frontend as incomplete
+  pusher.trigger(channel, 'transcript', {
+    text: fullText,
+    speaker: speakerId,
+    incomplete: true
+  }).catch(err => console.error('Pusher error:', err));
           // Update buffer with concatenated text
           buffer.text = fullText;
           buffer.fragments.push(transcript);
@@ -2527,7 +2539,12 @@ else if (data.is_final && !data.speech_final) {
           console.log('\n❌ GPT CONFIRMED: Concatenated text is INCOMPLETE');
           console.log(`   📦 Keeping in buffer (${buffer.fragments.length} fragments)`);
           console.log('   ⏳ Waiting for more audio to concatenate...\n');
-          
+            // Send to frontend as incomplete
+  pusher.trigger(channel, 'transcript', {
+    text: fullText,
+    speaker: speakerId,
+    incomplete: true
+  }).catch(err => console.error('Pusher error:', err));
           // Check if buffer is getting too large (safety limit)
           if (buffer.fragments.length >= 10) {
             console.log('   ⚠️  WARNING: Buffer has 10+ fragments!');
@@ -2552,6 +2569,11 @@ else if (data.is_final && !data.speech_final) {
         console.error('\n❌ GPT CHECK ERROR:', error.message);
         console.log('   ⚠️  Error during completeness check');
         console.log('   📦 Keeping current buffer, waiting for more audio...\n');
+          pusher.trigger(channel, 'transcript', {
+    text: buffer.text,
+    speaker: speakerId,
+    incomplete: true
+  }).catch(err => console.error('Pusher error:', err));
       }
       
     } else {
@@ -2605,7 +2627,11 @@ else if (data.is_final && !data.speech_final) {
           console.log('\n❌ GPT CONFIRMED: First fragment is INCOMPLETE');
           console.log('   📦 Starting buffer with this fragment');
           console.log('   ⏳ Waiting for more audio to concatenate...\n');
-          
+          pusher.trigger(channel, 'transcript', {
+    text: transcript,
+    speaker: speakerId,
+    incomplete: true
+  }).catch(err => console.error('Pusher error:', err));
           // Create buffer
           buffer.speaker = speakerId;
           buffer.text = transcript;
@@ -2616,7 +2642,11 @@ else if (data.is_final && !data.speech_final) {
         console.error('\n❌ GPT CHECK ERROR:', error.message);
         console.log('   ⚠️  Error during completeness check');
         console.log('   📦 Creating buffer as fallback...\n');
-        
+         pusher.trigger(channel, 'transcript', {
+    text: transcript,
+    speaker: speakerId,
+    incomplete: true
+  }).catch(err => console.error('Pusher error:', err));
         // Fallback: create buffer
         buffer.speaker = speakerId;
         buffer.text = transcript;
