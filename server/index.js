@@ -7,7 +7,7 @@ require('dotenv').config();
 const { createClient } = require('@deepgram/sdk');
 const Groq = require('groq-sdk');
 const { google } = require('googleapis');
-const nodemailer = require('nodemailer');
+
 const app = express();
 const server = http.createServer(app); // ← ADD THIS
 const wss = new WebSocket.Server({ server });
@@ -21,25 +21,6 @@ const pusher = new Pusher({
   secret: process.env.PUSHER_SECRET,
   cluster: process.env.PUSHER_CLUSTER,
   useTLS: true
-});
-// Email setup with Nodemailer
-const emailTransporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST || 'smtp.gmail.com',
-  port: parseInt(process.env.SMTP_PORT) || 587,
-  secure: false, // true for 465, false for other ports
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS
-  }
-});
-
-// Verify email configuration
-emailTransporter.verify((error, success) => {
-  if (error) {
-    console.log('❌ Email configuration error:', error);
-  } else {
-    console.log('✅ Email server is ready to send messages');
-  }
 });
 // Handle WebSocket connections
 wss.on('connection', (ws, req) => {
@@ -1338,11 +1319,11 @@ app.post('/api/test-summary', async (req, res) => {
       });
     }
     
-    await sendSummaryViaEmail(eventId, sessionId);
+    await sendSummaryViaN8n(eventId, sessionId);
     
     res.json({ 
       success: true, 
-      message: 'Summary email sent' 
+      message: 'Summary generation triggered' 
     });
     
   } catch (error) {
@@ -1350,6 +1331,7 @@ app.post('/api/test-summary', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
 // Process calendar event - UPDATED with duplicate prevention
 async function processCalendarEvent(eventId) {
   try {
@@ -1515,287 +1497,9 @@ const botSessionMap = new Map();
 const botEventMap = new Map();
 const sessionToBotMap = new Map(); 
 
-// async function sendSummaryViaN8n(eventId, sessionId, transcriptId) {
-//   try {
-//     console.log('\n📧 SENDING MEETING SUMMARY VIA N8N');
-//     console.log('='.repeat(80));
-    
-//     // Get Deepgram conversation history (correct order)
-//     const deepgramHistory = conversationHistory.get(sessionId) || [];
-    
-//     if (deepgramHistory.length === 0) {
-//       console.log('⚠️  No conversation to summarize');
-//       return;
-//     }
-    
-//     console.log(`📊 Deepgram history has ${deepgramHistory.length} messages`);
-    
-//     // Fetch complete Recall transcript from API
-//     console.log('\n🔄 Fetching complete Recall transcript...');
-//       const recallMessages = await fetchRecallTranscript(transcriptId);
-    
-//     if (!recallMessages || recallMessages.length === 0) {
-//       console.log('⚠️  Could not fetch Recall transcript, using Deepgram only');
-//     } else {
-//       console.log(`✅ Recall transcript has ${recallMessages.length} messages`);
-//     }
-    
-//     // Format both for LLM
-//     const deepgramText = deepgramHistory.map(msg => 
-//       `${msg.speaker}: ${msg.content}`
-//     ).join('\n');
-    
-//     const recallText = recallMessages ? recallMessages.map(msg => 
-//       `${msg.speaker}: ${msg.text}`
-//     ).join('\n') : '';
-    
-//     console.log('\n📜 DEEPGRAM TRANSCRIPT (correct order):');
-//     console.log('┌' + '─'.repeat(78) + '┐');
-//     deepgramText.split('\n').slice(0, 10).forEach(line => {
-//       console.log('│ ' + line.substring(0, 77).padEnd(77) + '│');
-//     });
-//     console.log('└' + '─'.repeat(78) + '┘');
-    
-//     if (recallText) {
-//       console.log('\n📜 RECALL TRANSCRIPT (has real names):');
-//       console.log('┌' + '─'.repeat(78) + '┐');
-//       recallText.split('\n').slice(0, 10).forEach(line => {
-//         console.log('│ ' + line.substring(0, 77).padEnd(77) + '│');
-//       });
-//       console.log('└' + '─'.repeat(78) + '┘');
-//     }
-    
-//     // Use LLM to generate final transcript with real names
-//     let fullTranscript;
-    
-//    if (recallText) {
-//   console.log('\n🤖 Using LLM to generate final transcript with real names...');
-//   console.log('🦙 Model: Llama 4 Maverick 17B');
-  
-//  const transcriptResponse = await groq.chat.completions.create({
-//   model: 'meta-llama/llama-4-maverick-17b-128e-instruct',
-//   messages: [
-//     {
-//       role: 'system',
-//       content: `You are a transcript formatter. Your ONLY job is to output the final transcript.
-
-// CRITICAL RULES:
-// - DO NOT explain your reasoning
-// - DO NOT show your thinking process
-// - DO NOT add any commentary
-// - OUTPUT ONLY THE TRANSCRIPT LINES
-// - NO introductions, NO explanations, NO analysis
-
-// INPUT:
-// 1. DEEPGRAM TRANSCRIPT: Correct order, generic speaker labels (Speaker 0, Speaker 1, AI Assistant)
-// 2. RECALL TRANSCRIPT: Real participant names
-
-// OUTPUT FORMAT (copy this EXACTLY):
-// [HH:MM:SS] Real Name: exact message
-// [HH:MM:SS] Real Name: exact message
-// [HH:MM:SS] James: exact message
-
-// MATCHING RULES:
-// - Match "Speaker 0/1/2" to real names from RECALL by comparing what they said
-// - Replace "AI Assistant" with "James"
-// - Use DEEPGRAM's exact order and text
-// - Handle multilingual content (English, Hindi, etc.)
-// - If timestamps missing, use placeholder like [00:00:00]
-
-// EXAMPLE OUTPUT (this is what you should produce):
-// [12:30:15] Atul Garg: Hey, James. How are you?
-// [12:30:17] James: I'm doing great, thanks!
-// [12:30:20] Atul Garg: What is your name?
-// [12:30:22] James: I'm James, your AI assistant!
-
-// NOW GENERATE THE TRANSCRIPT - OUTPUT ONLY THE LINES, NOTHING ELSE.`
-//     },
-//     {
-//       role: 'user',
-//       content: `DEEPGRAM TRANSCRIPT:
-// ${deepgramText}
-
-// RECALL TRANSCRIPT:
-// ${recallText}
-
-// Output the final transcript now (lines only, no explanation):`
-//     }
-//   ],
-//   max_completion_tokens: 2000,
-//   temperature: 0.3,  // ← Lower temperature for more deterministic output
-//   top_p: 0.9
-// });
-//       fullTranscript = transcriptResponse.choices[0].message.content.trim();
-      
-//       console.log('\n📥 RAW LLM RESPONSE:');
-//       console.log('Length:', fullTranscript.length, 'characters');
-//       console.log('Lines:', fullTranscript.split('\n').length);
-      
-//       // Fallback if LLM returns empty
-//       if (fullTranscript.length < 10) {
-//         console.log('⚠️  LLM returned empty, using Deepgram as fallback');
-//         fullTranscript = deepgramHistory.map(msg => {
-//           const time = new Date(msg.timestamp).toLocaleTimeString();
-//           const speaker = msg.speaker === 'AI Assistant' ? 'James' : msg.speaker;
-//           return `[${time}] ${speaker}: ${msg.content}`;
-//         }).join('\n\n');
-//       }
-      
-//     } else {
-//       // No Recall data, use Deepgram only
-//       console.log('\n📝 Using Deepgram transcript only (no Recall data)');
-//       fullTranscript = deepgramHistory.map(msg => {
-//         const time = new Date(msg.timestamp).toLocaleTimeString();
-//         const speaker = msg.speaker === 'AI Assistant' ? 'James' : msg.speaker;
-//         return `[${time}] ${speaker}: ${msg.content}`;
-//       }).join('\n\n');
-//     }
-    
-//     console.log('\n✅ FINAL TRANSCRIPT GENERATED:');
-//     console.log('┌' + '─'.repeat(78) + '┐');
-//     const lines = fullTranscript.split('\n').filter(l => l.trim());
-//     lines.slice(0, 15).forEach(line => {
-//       console.log('│ ' + line.substring(0, 77).padEnd(77) + '│');
-//     });
-//     if (lines.length > 15) {
-//       console.log('│ ' + `... (${lines.length - 15} more lines)`.padEnd(77) + '│');
-//     }
-//     console.log('└' + '─'.repeat(78) + '┘');
-    
-//     console.log(`\n📝 Final transcript length: ${fullTranscript.length} characters`);
-//     console.log(`💬 Total lines: ${lines.length}`);
-    
-//     // Generate summary
-//     console.log('\n🤖 Generating summary with GPT-OSS-20B...');
-//     const summaryResponse = await groq.chat.completions.create({
-//       model: 'openai/gpt-oss-20b',
-//       messages: [
-//         {
-//           role: 'system',
-//           content: `You are a professional meeting summarizer. Create a clear, concise summary in HTML format including:
-//           - Main topics discussed
-//           - Key decisions made
-//           - Important questions and answers
-//           - Action items (if any)
-//           - Participant names when relevant
-          
-//           Use HTML tags like <h3>, <p>, <ul>, <li> for structure.
-          
-//           IMPORTANT: Even if the meeting was short or informal, create a meaningful summary highlighting what was discussed.`
-//         },
-//         {
-//           role: 'user',
-//           content: `Summarize this meeting transcript:\n\n${fullTranscript}`
-//         }
-//       ],
-//       max_completion_tokens: 500,
-//       temperature: 0.3
-//     });
-    
-//     const summary = summaryResponse.choices[0].message.content.trim();
-//     console.log('✅ Summary generated');
-    
-//     // Get meeting details from Calendar
-//     console.log('\n📅 Getting meeting details from Calendar...');
-//     const event = await calendar.events.get({
-//       calendarId: 'primary',
-//       eventId: eventId
-//     });
-    
-//     const meetingTitle = event.data.summary || 'Meeting';
-//     const meetingDate = event.data.start?.dateTime || event.data.start?.date;
-//     const meetingUrl = extractMeetingUrl(event.data);
-    
-//     // Calculate duration
-//     const startTime = new Date(event.data.start?.dateTime);
-//     const endTime = new Date(event.data.end?.dateTime);
-//     const durationMinutes = Math.round((endTime - startTime) / 1000 / 60);
-//     const duration = `${durationMinutes} minutes`;
-    
-//     // Get all calendar attendees (exclude declined)
-//     console.log('\n📅 Getting participants from Calendar attendees...');
-//     const attendees = event.data.attendees || [];
-    
-//     let participantEmails = attendees
-//       .filter(attendee => {
-//         return attendee.email && 
-//                attendee.responseStatus !== 'declined';
-//       })
-//       .map(attendee => attendee.email);
-    
-//     console.log(`   Found ${participantEmails.length} attendees from calendar`);
-    
-//     // Add creator/host if not already in list
-//     if (event.data.creator?.email) {
-//       if (!participantEmails.includes(event.data.creator.email)) {
-//         participantEmails.push(event.data.creator.email);
-//         console.log(`   ✅ Added creator: ${event.data.creator.email}`);
-//       }
-//     }
-    
-//     participantEmails = [...new Set(participantEmails)];
-    
-//     console.log(`\n📧 Final participant count: ${participantEmails.length}`);
-//     console.log('   Emails:', participantEmails.join(', '));
-    
-//     if (participantEmails.length === 0) {
-//       console.log('\n⚠️  No participants found in calendar attendees!');
-//       console.log('   Summary generated but not sent - no recipients');
-//       return;
-//     }
-    
-//     // Send to n8n webhook
-//     console.log('\n📤 Sending data to n8n webhook...');
-//     const n8nWebhookUrl = process.env.N8N_WEBHOOK_URL;
-    
-//     const n8nPayload = {
-//       meetingTitle: meetingTitle,
-//       meetingDate: new Date(meetingDate).toLocaleString('en-US', {
-//         weekday: 'long',
-//         year: 'numeric',
-//         month: 'long',
-//         day: 'numeric',
-//         hour: '2-digit',
-//         minute: '2-digit'
-//       }),
-//       duration: duration,
-//       summary: summary,
-//       participantEmails: participantEmails,
-//       fullTranscript: fullTranscript,
-//       eventId: eventId
-//     };
-    
-//     const response = await fetch(n8nWebhookUrl, {
-//       method: 'POST',
-//       headers: {
-//         'Content-Type': 'application/json'
-//       },
-//       body: JSON.stringify(n8nPayload)
-//     });
-    
-//     if (!response.ok) {
-//       const errorText = await response.text();
-//       throw new Error(`n8n webhook failed: ${response.status} - ${errorText}`);
-//     }
-    
-//     const result = await response.json();
-    
-//     console.log('✅ n8n webhook successful!');
-//     console.log('   Response:', result);
-//     console.log('='.repeat(80) + '\n');
-    
-//     // Clean up conversation history
-//     conversationHistory.delete(sessionId);
-//     console.log('🧹 Cleaned up conversation history');
-    
-//   } catch (error) {
-//     console.error('❌ Error sending summary via n8n:', error.message);
-//     console.error('Full error:', error);
-//   }
-// }
-async function sendSummaryViaEmail(eventId, sessionId, transcriptId) {
+async function sendSummaryViaN8n(eventId, sessionId, transcriptId) {
   try {
-    console.log('\n📧 SENDING MEETING SUMMARY VIA EMAIL');
+    console.log('\n📧 SENDING MEETING SUMMARY VIA N8N');
     console.log('='.repeat(80));
     
     // Get Deepgram conversation history (correct order)
@@ -1810,7 +1514,7 @@ async function sendSummaryViaEmail(eventId, sessionId, transcriptId) {
     
     // Fetch complete Recall transcript from API
     console.log('\n🔄 Fetching complete Recall transcript...');
-    const recallMessages = await fetchRecallTranscript(transcriptId);
+      const recallMessages = await fetchRecallTranscript(transcriptId);
     
     if (!recallMessages || recallMessages.length === 0) {
       console.log('⚠️  Could not fetch Recall transcript, using Deepgram only');
@@ -1834,19 +1538,28 @@ async function sendSummaryViaEmail(eventId, sessionId, transcriptId) {
     });
     console.log('└' + '─'.repeat(78) + '┘');
     
+    if (recallText) {
+      console.log('\n📜 RECALL TRANSCRIPT (has real names):');
+      console.log('┌' + '─'.repeat(78) + '┐');
+      recallText.split('\n').slice(0, 10).forEach(line => {
+        console.log('│ ' + line.substring(0, 77).padEnd(77) + '│');
+      });
+      console.log('└' + '─'.repeat(78) + '┘');
+    }
+    
     // Use LLM to generate final transcript with real names
     let fullTranscript;
     
-    if (recallText) {
-      console.log('\n🤖 Using LLM to generate final transcript with real names...');
-      console.log('🦙 Model: Llama 4 Maverick 17B');
-      
-      const transcriptResponse = await groq.chat.completions.create({
-        model: 'meta-llama/llama-4-maverick-17b-128e-instruct',
-        messages: [
-          {
-            role: 'system',
-            content: `You are a transcript formatter. Your ONLY job is to output the final transcript.
+   if (recallText) {
+  console.log('\n🤖 Using LLM to generate final transcript with real names...');
+  console.log('🦙 Model: Llama 4 Maverick 17B');
+  
+ const transcriptResponse = await groq.chat.completions.create({
+  model: 'meta-llama/llama-4-maverick-17b-128e-instruct',
+  messages: [
+    {
+      role: 'system',
+      content: `You are a transcript formatter. Your ONLY job is to output the final transcript.
 
 CRITICAL RULES:
 - DO NOT explain your reasoning
@@ -1871,26 +1584,36 @@ MATCHING RULES:
 - Handle multilingual content (English, Hindi, etc.)
 - If timestamps missing, use placeholder like [00:00:00]
 
+EXAMPLE OUTPUT (this is what you should produce):
+[12:30:15] Atul Garg: Hey, James. How are you?
+[12:30:17] James: I'm doing great, thanks!
+[12:30:20] Atul Garg: What is your name?
+[12:30:22] James: I'm James, your AI assistant!
+
 NOW GENERATE THE TRANSCRIPT - OUTPUT ONLY THE LINES, NOTHING ELSE.`
-          },
-          {
-            role: 'user',
-            content: `DEEPGRAM TRANSCRIPT:
+    },
+    {
+      role: 'user',
+      content: `DEEPGRAM TRANSCRIPT:
 ${deepgramText}
 
 RECALL TRANSCRIPT:
 ${recallText}
 
 Output the final transcript now (lines only, no explanation):`
-          }
-        ],
-        max_completion_tokens: 2000,
-        temperature: 0.3,
-        top_p: 0.9
-      });
-      
+    }
+  ],
+  max_completion_tokens: 2000,
+  temperature: 0.3,  // ← Lower temperature for more deterministic output
+  top_p: 0.9
+});
       fullTranscript = transcriptResponse.choices[0].message.content.trim();
       
+      console.log('\n📥 RAW LLM RESPONSE:');
+      console.log('Length:', fullTranscript.length, 'characters');
+      console.log('Lines:', fullTranscript.split('\n').length);
+      
+      // Fallback if LLM returns empty
       if (fullTranscript.length < 10) {
         console.log('⚠️  LLM returned empty, using Deepgram as fallback');
         fullTranscript = deepgramHistory.map(msg => {
@@ -1901,6 +1624,7 @@ Output the final transcript now (lines only, no explanation):`
       }
       
     } else {
+      // No Recall data, use Deepgram only
       console.log('\n📝 Using Deepgram transcript only (no Recall data)');
       fullTranscript = deepgramHistory.map(msg => {
         const time = new Date(msg.timestamp).toLocaleTimeString();
@@ -1909,8 +1633,19 @@ Output the final transcript now (lines only, no explanation):`
       }).join('\n\n');
     }
     
-    console.log('\n✅ FINAL TRANSCRIPT GENERATED');
-    console.log(`📝 Final transcript length: ${fullTranscript.length} characters`);
+    console.log('\n✅ FINAL TRANSCRIPT GENERATED:');
+    console.log('┌' + '─'.repeat(78) + '┐');
+    const lines = fullTranscript.split('\n').filter(l => l.trim());
+    lines.slice(0, 15).forEach(line => {
+      console.log('│ ' + line.substring(0, 77).padEnd(77) + '│');
+    });
+    if (lines.length > 15) {
+      console.log('│ ' + `... (${lines.length - 15} more lines)`.padEnd(77) + '│');
+    }
+    console.log('└' + '─'.repeat(78) + '┘');
+    
+    console.log(`\n📝 Final transcript length: ${fullTranscript.length} characters`);
+    console.log(`💬 Total lines: ${lines.length}`);
     
     // Generate summary
     console.log('\n🤖 Generating summary with GPT-OSS-20B...');
@@ -1951,6 +1686,7 @@ Output the final transcript now (lines only, no explanation):`
     
     const meetingTitle = event.data.summary || 'Meeting';
     const meetingDate = event.data.start?.dateTime || event.data.start?.date;
+    const meetingUrl = extractMeetingUrl(event.data);
     
     // Calculate duration
     const startTime = new Date(event.data.start?.dateTime);
@@ -1958,7 +1694,7 @@ Output the final transcript now (lines only, no explanation):`
     const durationMinutes = Math.round((endTime - startTime) / 1000 / 60);
     const duration = `${durationMinutes} minutes`;
     
-    // Get all calendar attendees
+    // Get all calendar attendees (exclude declined)
     console.log('\n📅 Getting participants from Calendar attendees...');
     const attendees = event.data.attendees || [];
     
@@ -1990,118 +1726,44 @@ Output the final transcript now (lines only, no explanation):`
       return;
     }
     
-    // Format meeting date
-    const formattedDate = new Date(meetingDate).toLocaleString('en-US', {
-      weekday: 'long',
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
+    // Send to n8n webhook
+    console.log('\n📤 Sending data to n8n webhook...');
+    const n8nWebhookUrl = process.env.N8N_WEBHOOK_URL;
     
-    // Create HTML email
-    const emailHtml = `
-<!DOCTYPE html>
-<html>
-<head>
-  <style>
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
-      line-height: 1.6;
-      color: #333;
-      max-width: 800px;
-      margin: 0 auto;
-      padding: 20px;
-    }
-    .header {
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      color: white;
-      padding: 30px;
-      border-radius: 10px;
-      margin-bottom: 30px;
-    }
-    .header h1 {
-      margin: 0 0 10px 0;
-      font-size: 28px;
-    }
-    .header p {
-      margin: 5px 0;
-      opacity: 0.9;
-    }
-    .section {
-      background: #f8f9fa;
-      padding: 20px;
-      border-radius: 8px;
-      margin-bottom: 20px;
-    }
-    .section h2 {
-      color: #667eea;
-      margin-top: 0;
-      font-size: 20px;
-    }
-    .transcript {
-      background: white;
-      padding: 15px;
-      border-left: 4px solid #667eea;
-      font-family: 'Courier New', monospace;
-      font-size: 13px;
-      white-space: pre-wrap;
-      overflow-x: auto;
-      max-height: 500px;
-      overflow-y: auto;
-    }
-    .footer {
-      text-align: center;
-      color: #999;
-      font-size: 12px;
-      margin-top: 40px;
-      padding-top: 20px;
-      border-top: 1px solid #eee;
-    }
-  </style>
-</head>
-<body>
-  <div class="header">
-    <h1>📝 ${meetingTitle}</h1>
-    <p>📅 ${formattedDate}</p>
-    <p>⏱️ Duration: ${duration}</p>
-  </div>
-  
-  <div class="section">
-    <h2>📊 Summary</h2>
-    ${summary}
-  </div>
-  
-  <div class="section">
-    <h2>📜 Full Transcript</h2>
-    <div class="transcript">${fullTranscript}</div>
-  </div>
-  
-  <div class="footer">
-    <p>This summary was automatically generated by James AI Assistant</p>
-    <p>Meeting ID: ${eventId}</p>
-  </div>
-</body>
-</html>
-    `;
-    
-    // Send email to all participants
-    console.log('\n📤 Sending email to participants...');
-    
-    const mailOptions = {
-      from: `"James AI Assistant" <${process.env.EMAIL_FROM}>`,
-      to: participantEmails.join(', '),
-      subject: `Meeting Summary: ${meetingTitle}`,
-      html: emailHtml,
-      text: `Meeting: ${meetingTitle}\nDate: ${formattedDate}\nDuration: ${duration}\n\nSummary:\n${summary.replace(/<[^>]*>/g, '')}\n\nFull Transcript:\n${fullTranscript}`
+    const n8nPayload = {
+      meetingTitle: meetingTitle,
+      meetingDate: new Date(meetingDate).toLocaleString('en-US', {
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      }),
+      duration: duration,
+      summary: summary,
+      participantEmails: participantEmails,
+      fullTranscript: fullTranscript,
+      eventId: eventId
     };
     
-    const info = await emailTransporter.sendMail(mailOptions);
+    const response = await fetch(n8nWebhookUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(n8nPayload)
+    });
     
-    console.log('✅ Email sent successfully!');
-    console.log('   Message ID:', info.messageId);
-    console.log('   Recipients:', participantEmails.join(', '));
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`n8n webhook failed: ${response.status} - ${errorText}`);
+    }
+    
+    const result = await response.json();
+    
+    console.log('✅ n8n webhook successful!');
+    console.log('   Response:', result);
     console.log('='.repeat(80) + '\n');
     
     // Clean up conversation history
@@ -2109,7 +1771,7 @@ Output the final transcript now (lines only, no explanation):`
     console.log('🧹 Cleaned up conversation history');
     
   } catch (error) {
-    console.error('❌ Error sending summary via email:', error.message);
+    console.error('❌ Error sending summary via n8n:', error.message);
     console.error('Full error:', error);
   }
 }
@@ -2422,10 +2084,10 @@ app.post('/api/recall-webhook', async (req, res) => {
       
       if (eventId && sessionId && transcript_id) {
         // Wait 5 seconds then generate summary
-       setTimeout(async () => {
-  console.log('📧 Generating meeting summary with transcript...');
-  await sendSummaryViaEmail(eventId, sessionId, transcript_id);
-}, 5000);
+        setTimeout(async () => {
+          console.log('📧 Generating meeting summary with transcript...');
+          await sendSummaryViaN8n(eventId, sessionId, transcript_id);
+        }, 5000);
       } else {
         console.log('   ⚠️  Missing required data');
       }
@@ -2446,7 +2108,6 @@ app.post('/api/recall-webhook', async (req, res) => {
     console.error('   Full error:', error);
   }
 });
-
 // Manual calendar check endpoint
 app.post('/api/trigger-calendar-check', async (req, res) => {
   try {
