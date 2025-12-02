@@ -142,8 +142,8 @@
     <script src="https://js.pusher.com/8.2.0/pusher.min.js"></script>
     <script>
         const params = new URLSearchParams(window.location.search);
-        const SERVER_URL = params.get('server') || 'https://zoom-bot-pgyj.onrender.com';
-        // const SERVER_URL = params.get('server') || 'http://localhost:3000';
+        // const SERVER_URL = params.get('server') || 'https://zoom-bot-pgyj.onrender.com';
+        const SERVER_URL = params.get('server') || 'http://localhost:3000';
         const PUSHER_KEY = params.get('pusher_key') || '53efc497795d6002deb2';
         const PUSHER_CLUSTER = params.get('pusher_cluster') || 'ap2';
         
@@ -433,52 +433,44 @@
                     console.log('✅ Pusher subscription successful');
                 });
                 
-              // Handle document checking status
-channel.bind('checking-documents', (data) => {
-  console.log('📚 Checking documents...');
-  const statusInfo = document.getElementById('statusInfo');
-  statusInfo.textContent = '📚 Checking documents...';
-  statusInfo.style.color = '#667eea';
-});
-
-// Handle AI response
-channel.bind('ai-response', (data) => {
-  console.log('📥 Received AI response event:', data);
-  
-  // Reset status
-  const statusInfo = document.getElementById('statusInfo');
-  statusInfo.textContent = 'Speak now';
-  statusInfo.style.color = '#666';
-  
-  if (data.text) {
-    showResponse(data.text);
-  }
-});
-
-// Handle transcript
-channel.bind('transcript', (data) => {
-  console.log('📥 Received transcript event:', data);
-  
-  const statusInfo = document.getElementById('statusInfo');
-  
-  if (data.text) {
-    if (data.blocked) {
-      statusInfo.textContent = '🔇 Bot is speaking - Your speech was captured';
-      statusInfo.style.color = '#ff9800';
-      setTimeout(() => {
-        statusInfo.textContent = 'Speak now';
-        statusInfo.style.color = '#666';
-      }, 3000);
-    } else if (data.incomplete) {
-      statusInfo.textContent = '⏳ Incomplete speech - Waiting for more...';
-      statusInfo.style.color = '#2196f3';
-    } else {
-      statusInfo.textContent = 'Speak now';
-      statusInfo.style.color = '#666';
+               channel.bind('transcript', (data) => {
+    console.log('📥 Received transcript event:', data);
+    
+    const statusInfo = document.getElementById('statusInfo');
+    
+    if (data.text) {
+        // Update status info based on flags
+        if (data.blocked) {
+            statusInfo.textContent = '🔇 Bot is speaking - Your speech was captured';
+            statusInfo.style.color = '#ff9800';
+            
+            // Reset after 3 seconds
+            setTimeout(() => {
+                statusInfo.textContent = 'Speak now';
+                statusInfo.style.color = '#666';
+            }, 3000);
+            
+        } else if (data.incomplete) {
+            statusInfo.textContent = '⏳ Incomplete speech - Waiting for more...';
+            statusInfo.style.color = '#2196f3';
+            
+        } else {
+            // Complete transcript - reset to normal
+            statusInfo.textContent = 'Speak now';
+            statusInfo.style.color = '#666';
+        }
+        
+        // Always show the transcript
+        showTranscript(data.text);
     }
-    showTranscript(data.text);
-  }
 });
+            channel.bind('ai-response', (data) => {
+                    console.log('📥 Received AI response event:', data);
+                    if (data.text) {
+                        showResponse(data.text);
+                    }
+                });
+                
                 connectAudioWebSocket();
                 
                 setInterval(() => {

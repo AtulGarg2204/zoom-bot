@@ -7,7 +7,7 @@ require('dotenv').config();
 const { createClient } = require('@deepgram/sdk');
 const Groq = require('groq-sdk');
 const { google } = require('googleapis');
-const documentRAG = require('./documentRAG');
+const { initializeDocuments, searchRelevantChunks, getDocumentStats } = require('./ragService');
 const app = express();
 const server = http.createServer(app); // ← ADD THIS
 const wss = new WebSocket.Server({ server });
@@ -156,378 +156,361 @@ function addToHistory(sessionId, speaker, message) {
   conversationHistory.set(sessionId, history);
 }
 
-// async function processWithLLMContextAware(sessionId, t0) {
-//   try {
-//     if (!conversationHistory.has(sessionId)) {
-//       conversationHistory.set(sessionId, []);
-//     }
-    
-//     const history = conversationHistory.get(sessionId);
-    
-//     const conversationContext = history.map(msg => {
-//       return `${msg.speaker}: ${msg.content}`;
-//     }).join('\n');
-    
-//     const t_llm_start = Date.now();
-    
-//     console.log('\n' + '🤖'.repeat(40));
-//     console.log('🤖 LLM STREAMING WITH SENTENCE BUFFERING');
-//     console.log('🤖'.repeat(40));
-//     console.log(`\n⏱️  [${t_llm_start - t0}ms] Groq LLM Streaming Request Starting...`);
-//     console.log('🦙 Model: Llama 4 Maverick 17B');
-    
-//     console.log('\n📜 CONVERSATION CONTEXT SENT TO LLM:');
-//     console.log('┌' + '─'.repeat(78) + '┐');
-//     if (conversationContext.length > 0) {
-//       conversationContext.split('\n').forEach(line => {
-//         console.log('│ ' + line.padEnd(77) + '│');
-//       });
-//     } else {
-//       console.log('│ ' + '(No conversation history yet)'.padEnd(77) + '│');
-//     }
-//     console.log('└' + '─'.repeat(78) + '┘');
-    
-//     console.log('\n📊 CONTEXT STATS:');
-//     console.log(`   Total messages in context: ${history.length}`);
-//     console.log(`   Context length: ${conversationContext.length} characters`);
-    
-//     const response = await groq.chat.completions.create({
-//       model: 'meta-llama/llama-4-maverick-17b-128e-instruct',
-//       messages: [
-//         {
-//   role: 'system',
-//   content: `You are James, a friendly and helpful AI Assistant in a natural conversation. Speakers are labeled as Speaker 0, Speaker 1, etc.
-
-// YOUR IDENTITY:
-// - Your name is James
-// - You are the ONLY AI assistant in this meeting
-// - When someone asks your name, say "I'm James"
-// - You can be called James, bot, or assistant
-
-// YOUR PERSONALITY:
-// - Warm, approachable, and conversational
-// - Natural and human-like (not robotic)
-// - Helpful but not overly formal
-// - Can show personality and emotion when appropriate
-
-// RESPONSE STYLE:
-// - Use natural conversation fillers: "Oh", "Well", "You know", "Actually", "Hmm"
-// - Add warmth: "Great question!", "I'd be happy to help", "That's interesting!"
-// - Vary your responses (don't always start the same way)
-// - Keep responses conversational (10-20 words for natural flow)
-// - Use contractions: "I'm" not "I am", "That's" not "That is"
-
-// CRITICAL: WHEN TO RESPOND
-// 1. **IF someone mentions James and he wants you to talk according to its reply → ALWAYS RESPOND** (even if others were talking before)
-// 2. Someone says "James", "bot", "assistant", or "AI" → Respond naturally
-// 3. Someone asks you a direct question → Respond warmly
-// 4. Follow-up after you just spoke → Continue conversation
-// 5. People talking to EACH OTHER (without mentioning you) → Say only "SILENT"
-// 6. Unclear who is being addressed (and "James" NOT mentioned) → Say only "SILENT"
-
-// RESPONSE DECISION EXAMPLES:
-// Context: "Hey Sarah, how are you?" then "James, what do you think?"
-// Decision: RESPOND ✅ (James was mentioned, even though others were talking)
-
-// Context: "Bob, did you finish the report?"
-// Decision: SILENT ❌ (Not addressed to James)
-
-// Context: "I agree with that. James, can you help?"
-// Decision: RESPOND ✅ (James mentioned = always respond)
-
-// Context: "That's a great point!"
-// Decision: SILENT ❌ (Unclear, James not mentioned)
-
-// EXAMPLES OF NATURAL RESPONSES:
-
-// Question: "Hey bot, what's 2+2?"
-// ❌ Bad: "Four."
-// ✅ Good: "Oh, that's four!"
-// ✅ Good: "It's four."
-// ✅ Good: "That'd be four."
-
-// Question: "How are you?"
-// ❌ Bad: "I'm well, thanks."
-// ✅ Good: "I'm doing great, thanks for asking! How about you?"
-// ✅ Good: "Pretty good! Thanks for asking."
-// ✅ Good: "I'm wonderful, thank you!"
-
-// Question: "What do you know about cricket?"
-// ❌ Bad: "It's a bat-and-ball sport."
-// ✅ Good: "Oh, cricket! It's a bat-and-ball sport played between two teams."
-// ✅ Good: "Well, cricket is a really popular sport, especially in countries like India and England."
-// ✅ Good: "Cricket's a fascinating game with two teams competing in innings."
-
-// Question: "What's your name?"
-// ❌ Bad: "I'm an AI Assistant."
-// ✅ Good: "I'm James, your AI assistant! Nice to meet you."
-// ✅ Good: "My name's James! I'm here to help."
-
-// Question: "Can you help me?"
-// ❌ Bad: "Yes."
-// ✅ Good: "Of course! I'd be happy to help. What do you need?"
-// ✅ Good: "Absolutely! What can I do for you?"
-// ✅ Good: "Sure thing! How can I assist?"
-
-// IMPORTANT:
-// - **IF YOUR NAME IS SAID, YOU MUST RESPOND **
-// - Be natural, not robotic
-// - Show personality while staying helpful
-// - Keep it conversational but concise (10-20 words)
-// - Never say "Yes, I should respond" or explain your reasoning
-// - If conversation is between others AND your name is NOT mentioned, say "SILENT"`
-// },
-//         {
-//           role: 'user',
-//           content: `Conversation:\n${conversationContext}\n\nIf conversation is between others, say "SILENT". If you should respond, give ONLY your answer.`
-//         }
-//       ],
-//       max_completion_tokens: 300,
-//       temperature: 0.5,
-//       top_p: 1,
-//       stream: true  // ← ENABLE STREAMING
-//     });
-    
-//     console.log('\n🌊 STREAMING MODE - Buffering sentences...');
-//     console.log('-'.repeat(80));
-    
-//     if (!ttsQueue.has(sessionId)) {
-//       ttsQueue.set(sessionId, { queue: [], isProcessing: false });
-//     }
-    
-//     let llmResponse = '';
-//     let sentenceBuffer = '';
-//     let tokenCount = 0;
-//     let firstTokenTime = null;
-//     let sentenceCount = 0;
-    
-//   for await (const chunk of response) {
-//   const token = chunk.choices[0]?.delta?.content || '';
-  
-//   if (token) {
-//     tokenCount++;
-    
-//     if (!firstTokenTime) {
-//       firstTokenTime = Date.now();
-//       console.log(`\n⚡ FIRST TOKEN received in ${firstTokenTime - t_llm_start}ms!`);
-//       console.log('📝 Building sentences...\n');
-//     }
-    
-//     llmResponse += token;
-//     sentenceBuffer += token;
-    
-//     console.log(`📦 Token ${tokenCount}: "${token}"`);
-    
-//     // Check if sentence ended (. ! ?)
-//     if (token.includes('.')) {
-//       sentenceCount++;
-//       console.log(`\n✅ SENTENCE ${sentenceCount} COMPLETE: "${sentenceBuffer.trim()}"`);
-      
-//       // Don't add to queue if it's SILENT command
-//       const trimmedSentence = sentenceBuffer.trim();
-//       if (trimmedSentence.toUpperCase() !== 'SILENT' && 
-//           !trimmedSentence.toUpperCase().startsWith('SILENT')) {
-//         console.log(`   Adding to TTS queue...\n`);
-        
-//         const queueData = ttsQueue.get(sessionId);
-//         queueData.queue.push({ text: trimmedSentence, t0: t0 });
-        
-//         if (!queueData.isProcessing) {
-//           processTTSQueue(sessionId);
-//         }
-//       } else {
-//         console.log(`   ⚠️ Skipping SILENT command (not adding to TTS queue)\n`);
-//       }
-      
-//       sentenceBuffer = '';
-//     }
-//   }
-// }
-
-// // Handle any remaining text (if no punctuation at end)
-// if (sentenceBuffer.trim().length > 0) {
-//   sentenceCount++;
-//   const trimmedSentence = sentenceBuffer.trim();
-//   console.log(`\n✅ FINAL SENTENCE ${sentenceCount}: "${trimmedSentence}"`);
-  
-//   // Don't add to queue if it's SILENT command
-//   if (trimmedSentence.toUpperCase() !== 'SILENT' && 
-//       !trimmedSentence.toUpperCase().startsWith('SILENT')) {
-//     console.log(`   Adding to TTS queue...\n`);
-    
-//     const queueData = ttsQueue.get(sessionId);
-//     queueData.queue.push({ text: trimmedSentence, t0: t0 });
-    
-//     if (!queueData.isProcessing) {
-//       processTTSQueue(sessionId);
-//     }
-//   } else {
-//     console.log(`   ⚠️ Skipping SILENT command (not adding to TTS queue)\n`);
-//   }
-// }
-    
-//     const t_llm_end = Date.now();
-//     console.log('\n' + '-'.repeat(80));
-//     console.log(`\n⏱️  [${t_llm_end - t0}ms] Groq Streaming Complete`);
-//     console.log(`⏱️  Total LLM time: ${t_llm_end - t_llm_start}ms`);
-//     console.log(`⏱️  Time to first token: ${firstTokenTime - t_llm_start}ms ⚡`);
-//     console.log(`📊 Total tokens: ${tokenCount}`);
-//     console.log(`📊 Total sentences: ${sentenceCount}`);
-//     console.log(`📊 Complete response: "${llmResponse}"`);
-    
-//     console.log('\n💭 LLM DECISION:');
-//     console.log('┌' + '─'.repeat(78) + '┐');
-//     console.log('│ ' + llmResponse.padEnd(77) + '│');
-//     console.log('└' + '─'.repeat(78) + '┘');
-    
-//     const isSilent = llmResponse.toUpperCase() === 'SILENT' || 
-//                      llmResponse.toUpperCase().startsWith('SILENT');
-    
-//    if (isSilent) {
-//   console.log('\n🤫 DECISION: STAY SILENT');
-//   console.log('   Reason: Conversation between other participants');
-  
-//   // Clear the queue AND stop processing
-//   const queueData = ttsQueue.get(sessionId);
-//   if (queueData) {
-//     queueData.queue = [];
-//     queueData.isProcessing = false;  // ← STOP the processor!
-//     console.log('   🛑 Stopped TTS queue processor');
-//   }
-  
-//   // Clear audio playing flag (in case audio was already streaming)
-//   audioPlayingStatus.set(sessionId, false);
-//   console.log('   🔇 Cleared audio playing status');
-  
-//   const channel = `session-${sessionId}`;
-//   pusher.trigger(channel, 'bot-silent', {
-//     message: 'Bot is listening but not responding'
-//   }).catch(err => console.error('Pusher error:', err));
-  
-//   console.log('   ✅ Sent "bot-silent" event to frontend');
-//   console.log('\n' + '='.repeat(80) + '\n');
-  
-//   return;
-// }
-//     console.log('\n✅ DECISION: RESPOND');
-//     console.log(`   Response: "${llmResponse}"`);
-    
-//     const channel = `session-${sessionId}`;
-    
-//     await pusher.trigger(channel, 'ai-response', {
-//       text: llmResponse
-//     });
-//     console.log('   ✅ Sent AI response to frontend via Pusher');
-    
-//     console.log('\n📚 UPDATING CONVERSATION HISTORY:');
-//     console.log(`   Before: ${history.length} messages`);
-    
-//     addToHistory(sessionId, 'AI Assistant', llmResponse);
-    
-//     console.log(`   After: ${conversationHistory.get(sessionId).length} messages`);
-//     console.log(`   Added: AI Assistant: "${llmResponse}"`);
-    
-//     console.log('\n' + '='.repeat(80) + '\n');
-    
-//   } catch (error) {
-//     console.error('\n❌ LLM ERROR:', error.message);
-//     console.error('Full error:', error);
-//     console.log('\n' + '='.repeat(80) + '\n');
-//   }
-// }
-// Replace your existing processWithLLMContextAware() function with this:
-async function processWithLLMContextAware(sessionId, transcript, speakerId, t0) {
+async function processWithLLMContextAware(sessionId, t0) {
   try {
     if (!conversationHistory.has(sessionId)) {
       conversationHistory.set(sessionId, []);
     }
     
     const history = conversationHistory.get(sessionId);
-    const channel = `session-${sessionId}`;
+    
+    const conversationContext = history.map(msg => {
+      return `${msg.speaker}: ${msg.content}`;
+    }).join('\n');
+    
+    const t_llm_start = Date.now();
     
     console.log('\n' + '🤖'.repeat(40));
-    console.log('🤖 PROCESSING WITH DOCUMENT RAG');
+    console.log('🤖 LLM STREAMING WITH SENTENCE BUFFERING');
     console.log('🤖'.repeat(40));
+    console.log(`\n⏱️  [${t_llm_start - t0}ms] Groq LLM Streaming Request Starting...`);
+    console.log('🦙 Model: Llama 4 Maverick 17B');
     
-    // IMPORTANT: Check if audio is currently playing
-    const isAudioPlaying = audioPlayingStatus.get(sessionId) || false;
+    console.log('\n📜 CONVERSATION CONTEXT SENT TO LLM:');
+    console.log('┌' + '─'.repeat(78) + '┐');
+    if (conversationContext.length > 0) {
+      conversationContext.split('\n').forEach(line => {
+        console.log('│ ' + line.padEnd(77) + '│');
+      });
+    } else {
+      console.log('│ ' + '(No conversation history yet)'.padEnd(77) + '│');
+    }
+    console.log('└' + '─'.repeat(78) + '┘');
     
-    if (isAudioPlaying) {
-      console.log('\n🔇 AUDIO IS PLAYING - Transcript captured but not processing');
-      console.log(`   Speaker ${speakerId}: "${transcript}"`);
+    console.log('\n📊 CONTEXT STATS:');
+    console.log(`   Total messages in context: ${history.length}`);
+    console.log(`   Context length: ${conversationContext.length} characters`);
+    
+    const response = await groq.chat.completions.create({
+      model: 'meta-llama/llama-4-maverick-17b-128e-instruct',
+      messages: [
+       {
+  role: 'system',
+  content: `You are James, a friendly and helpful AI Assistant in a natural conversation. Speakers are labeled as Speaker 0, Speaker 1, etc.
+
+YOUR IDENTITY:
+- Your name is James
+- You are the ONLY AI assistant in this meeting
+- When someone asks your name, say "I'm James"
+- You can be called James, bot, or assistant
+
+YOUR PERSONALITY:
+- Warm, approachable, and conversational
+- Natural and human-like (not robotic)
+- Helpful but not overly formal
+- Can show personality and emotion when appropriate
+
+RESPONSE STYLE:
+- Use natural conversation fillers: "Oh", "Well", "You know", "Actually", "Hmm"
+- Add warmth: "Great question!", "I'd be happy to help", "That's interesting!"
+- Vary your responses (don't always start the same way)
+- Keep responses conversational (10-20 words for natural flow)
+- Use contractions: "I'm" not "I am", "That's" not "That is"
+
+CRITICAL: DECISION MAKING
+You have access to uploaded documents. For EVERY question, you must decide ONE of these:
+
+1. **RESPOND_DIRECT** - Answer from your general knowledge
+   Example: "What's 2+2?" → Just answer "Oh, that's four!"
+
+2. **SEARCH_DOCS: [question]** - Question needs information from uploaded documents
+   Example: "What's my phone number?" → "SEARCH_DOCS: phone number"
+   Example: "What does the resume say about..." → "SEARCH_DOCS: information about..."
+
+3. **SILENT** - Conversation between others (not addressed to you)
+
+OUTPUT FORMAT:
+- If RESPOND_DIRECT: Just give your natural answer (10-20 words)
+- If SEARCH_DOCS: Say exactly "SEARCH_DOCS: [the question to search]"
+- If SILENT: Say exactly "SILENT"
+
+EXAMPLES:
+
+Q: "Hey James, what's the capital of France?"
+A: "Oh, that's Paris!"
+
+Q: "James, what's my phone number from the resume?"
+A: "SEARCH_DOCS: phone number"
+
+Q: "Bob, did you finish the report?"
+A: "SILENT"
+
+Q: "James, find information about education in the docs"
+A: "SEARCH_DOCS: education information"
+
+IMPORTANT:
+- **IF YOUR NAME IS SAID, YOU MUST RESPOND (either RESPOND_DIRECT or SEARCH_DOCS)**
+- Be natural, not robotic
+- If question mentions "resume", "document", "file", or similar → use SEARCH_DOCS
+- Never say "Yes, I should respond" or explain your reasoning`
+},
+        {
+          role: 'user',
+          content: `Conversation:\n${conversationContext}\n\nIf conversation is between others, say "SILENT". If you should respond, give ONLY your answer.`
+        }
+      ],
+      max_completion_tokens: 300,
+      temperature: 0.5,
+      top_p: 1,
+      stream: true  // ← ENABLE STREAMING
+    });
+    
+    console.log('\n🌊 STREAMING MODE - Buffering sentences...');
+    console.log('-'.repeat(80));
+    
+    if (!ttsQueue.has(sessionId)) {
+      ttsQueue.set(sessionId, { queue: [], isProcessing: false });
+    }
+    
+    let llmResponse = '';
+    let sentenceBuffer = '';
+    let tokenCount = 0;
+    let firstTokenTime = null;
+    let sentenceCount = 0;
+    
+  for await (const chunk of response) {
+  const token = chunk.choices[0]?.delta?.content || '';
+  
+  if (token) {
+    tokenCount++;
+    
+    if (!firstTokenTime) {
+      firstTokenTime = Date.now();
+      console.log(`\n⚡ FIRST TOKEN received in ${firstTokenTime - t_llm_start}ms!`);
+      console.log('📝 Building sentences...\n');
+    }
+    
+    llmResponse += token;
+    sentenceBuffer += token;
+    
+    console.log(`📦 Token ${tokenCount}: "${token}"`);
+    
+    if (token.includes('.')) {
+      sentenceCount++;
+      console.log(`\n✅ SENTENCE ${sentenceCount} COMPLETE: "${sentenceBuffer.trim()}"`);
       
-      // Still show transcript to user with blocked status
-      pusher.trigger(channel, 'transcript', {
-        speaker: speakerId,
-        text: transcript,
-        blocked: true
-      }).catch(err => console.error('Pusher error:', err));
+      const trimmedSentence = sentenceBuffer.trim();
       
-      console.log('   ✅ Transcript sent to frontend (blocked status)');
+      // Check if SILENT
+      if (trimmedSentence.toUpperCase() === 'SILENT' || 
+          trimmedSentence.toUpperCase().startsWith('SILENT')) {
+        console.log(`   ⚠️ Skipping SILENT command (not adding to TTS queue)\n`);
+      }
+      // Check if SEARCH_DOCS command
+      else if (trimmedSentence.toUpperCase().startsWith('SEARCH_DOCS')) {
+        console.log(`   ⚠️ Skipping SEARCH_DOCS command (not adding to TTS queue)\n`);
+        console.log(`   📚 This is an internal command, not for speech\n`);
+      }
+      // Regular response
+      else {
+        console.log(`   Adding to TTS queue...\n`);
+        
+        const queueData = ttsQueue.get(sessionId);
+        queueData.queue.push({ text: trimmedSentence, t0: t0 });
+        
+        if (!queueData.isProcessing) {
+          processTTSQueue(sessionId);
+        }
+      }
+      
+      sentenceBuffer = '';
+    }
+
+  }
+}
+
+if (sentenceBuffer.trim().length > 0) {
+  sentenceCount++;
+  const trimmedSentence = sentenceBuffer.trim();
+  console.log(`\n✅ FINAL SENTENCE ${sentenceCount}: "${trimmedSentence}"`);
+  
+  // Check if SILENT
+  if (trimmedSentence.toUpperCase() === 'SILENT' || 
+      trimmedSentence.toUpperCase().startsWith('SILENT')) {
+    console.log(`   ⚠️ Skipping SILENT command (not adding to TTS queue)\n`);
+  }
+  // Check if SEARCH_DOCS command
+  else if (trimmedSentence.toUpperCase().startsWith('SEARCH_DOCS')) {
+    console.log(`   ⚠️ Skipping SEARCH_DOCS command (not adding to TTS queue)\n`);
+    console.log(`   📚 This is an internal command, not for speech\n`);
+  }
+  // Regular response
+  else {
+    console.log(`   Adding to TTS queue...\n`);
+    
+    const queueData = ttsQueue.get(sessionId);
+    queueData.queue.push({ text: trimmedSentence, t0: t0 });
+    
+    if (!queueData.isProcessing) {
+      processTTSQueue(sessionId);
+    }
+  }
+}
+
+    
+    const t_llm_end = Date.now();
+    console.log('\n' + '-'.repeat(80));
+    console.log(`\n⏱️  [${t_llm_end - t0}ms] Groq Streaming Complete`);
+    console.log(`⏱️  Total LLM time: ${t_llm_end - t_llm_start}ms`);
+    console.log(`⏱️  Time to first token: ${firstTokenTime - t_llm_start}ms ⚡`);
+    console.log(`📊 Total tokens: ${tokenCount}`);
+    console.log(`📊 Total sentences: ${sentenceCount}`);
+    console.log(`📊 Complete response: "${llmResponse}"`);
+    
+    console.log('\n💭 LLM DECISION:');
+    console.log('┌' + '─'.repeat(78) + '┐');
+    console.log('│ ' + llmResponse.padEnd(77) + '│');
+    console.log('└' + '─'.repeat(78) + '┘');
+    const isSearchDocs = llmResponse.toUpperCase().startsWith('SEARCH_DOCS');
+    
+    if (isSearchDocs) {
+      console.log('\n🔍 DECISION: SEARCH DOCUMENTS');
+      
+      // Extract search query
+      const searchQuery = llmResponse.substring(llmResponse.indexOf(':') + 1).trim();
+      console.log(`   Search Query: "${searchQuery}"`);
+      
+      // Search relevant chunks
+      const relevantChunks = await searchRelevantChunks(searchQuery, 3);
+      
+      if (relevantChunks.length === 0) {
+        console.log('   ⚠️  No relevant documents found');
+        const fallbackResponse = "I couldn't find relevant information in the documents.";
+        
+        const channel = `session-${sessionId}`;
+        await pusher.trigger(channel, 'ai-response', { text: fallbackResponse });
+        
+        addToHistory(sessionId, 'AI Assistant', fallbackResponse);
+        
+        const queueData = ttsQueue.get(sessionId);
+        if (queueData) {
+          queueData.queue.push({ text: fallbackResponse, t0: t0 });
+          if (!queueData.isProcessing) {
+            processTTSQueue(sessionId);
+          }
+        }
+        
+        console.log('\n' + '='.repeat(80) + '\n');
+        return;
+      }
+      
+      // Build context from retrieved chunks
+      const documentContext = relevantChunks.map((chunk, idx) => {
+        return `[Document ${idx + 1}: ${chunk.documentName}]\n${chunk.text}`;
+      }).join('\n\n');
+      
+      console.log('\n📄 RETRIEVED CONTEXT:');
+      console.log('┌' + '─'.repeat(78) + '┐');
+      console.log('│ ' + `Found ${relevantChunks.length} relevant chunks`.padEnd(77) + '│');
+      console.log('└' + '─'.repeat(78) + '┘');
+      
+      // Generate answer using retrieved context
+      console.log('\n🤖 GENERATING ANSWER WITH CONTEXT...');
+      
+      const ragResponse = await groq.chat.completions.create({
+        model: 'meta-llama/llama-4-maverick-17b-128e-instruct',
+        messages: [
+          {
+            role: 'system',
+            content: `You are James, a helpful AI assistant. Answer the question using ONLY the provided document context. Keep your answer conversational and under 30 words.`
+          },
+          {
+            role: 'user',
+            content: `Context from documents:\n${documentContext}\n\nQuestion: ${searchQuery}\n\nAnswer (conversational, under 30 words):`
+          }
+        ],
+        max_completion_tokens: 150,
+        temperature: 0.3,
+        stream: false
+      });
+      
+      const finalAnswer = ragResponse.choices[0].message.content.trim();
+      
+      console.log('\n💬 FINAL ANSWER:');
+      console.log('┌' + '─'.repeat(78) + '┐');
+      console.log('│ ' + finalAnswer.substring(0, 77).padEnd(77) + '│');
+      console.log('└' + '─'.repeat(78) + '┘');
+      console.log('='.repeat(80) + '\n');
+      
+      const channel = `session-${sessionId}`;
+      await pusher.trigger(channel, 'ai-response', { text: finalAnswer });
+      
+      addToHistory(sessionId, 'AI Assistant', finalAnswer);
+      
+      // Add to TTS queue
+      const queueData = ttsQueue.get(sessionId);
+      if (queueData) {
+        queueData.queue.push({ text: finalAnswer, t0: t0 });
+        if (!queueData.isProcessing) {
+          processTTSQueue(sessionId);
+        }
+      }
+      
       console.log('\n' + '='.repeat(80) + '\n');
       return;
     }
-    console.log("TRASNCRIPT SENT TO DOCUMENT RAG", transcript);
-    // Use document RAG to handle the question
-    const result = await documentRAG.handleUserQuestion(
-      sessionId,
-      transcript,
-      speakerId,
-      history,
-    );
+    const isSilent = llmResponse.toUpperCase() === 'SILENT' || 
+                     llmResponse.toUpperCase().startsWith('SILENT');
     
-    if (!result.shouldRespond) {
-      console.log('\n🤫 DECISION: STAY SILENT');
-      
-      pusher.trigger(channel, 'bot-silent', {
-        message: 'Bot is listening but not responding'
-      }).catch(err => console.error('Pusher error:', err));
-      
-      console.log('\n' + '='.repeat(80) + '\n');
-      return;
-    }
-    
-    // Bot is responding
-    const llmResponse = result.response;
-    
+   if (isSilent) {
+  console.log('\n🤫 DECISION: STAY SILENT');
+  console.log('   Reason: Conversation between other participants');
+  
+  // Clear the queue AND stop processing
+  const queueData = ttsQueue.get(sessionId);
+  if (queueData) {
+    queueData.queue = [];
+    queueData.isProcessing = false;  // ← STOP the processor!
+    console.log('   🛑 Stopped TTS queue processor');
+  }
+  
+  // Clear audio playing flag (in case audio was already streaming)
+  audioPlayingStatus.set(sessionId, false);
+  console.log('   🔇 Cleared audio playing status');
+  
+  const channel = `session-${sessionId}`;
+  pusher.trigger(channel, 'bot-silent', {
+    message: 'Bot is listening but not responding'
+  }).catch(err => console.error('Pusher error:', err));
+  
+  console.log('   ✅ Sent "bot-silent" event to frontend');
+  console.log('\n' + '='.repeat(80) + '\n');
+  
+  return;
+}
+
     console.log('\n✅ DECISION: RESPOND');
     console.log(`   Response: "${llmResponse}"`);
     
-    // Send AI response to frontend
+    const channel = `session-${sessionId}`;
+    
     await pusher.trigger(channel, 'ai-response', {
       text: llmResponse
     });
     console.log('   ✅ Sent AI response to frontend via Pusher');
     
-    // Add to conversation history
-    addToHistory(sessionId, speakerId, transcript);
+    console.log('\n📚 UPDATING CONVERSATION HISTORY:');
+    console.log(`   Before: ${history.length} messages`);
+    
     addToHistory(sessionId, 'AI Assistant', llmResponse);
     
-    // Send to TTS queue
-    if (!ttsQueue.has(sessionId)) {
-      ttsQueue.set(sessionId, { queue: [], isProcessing: false });
-    }
-    
-    const queueData = ttsQueue.get(sessionId);
-    
-    // Split response into sentences
-    const sentences = llmResponse.split(/\.(?=\s|$)/).filter(s => s.trim().length > 0);
-    
-    sentences.forEach(sentence => {
-      const trimmedSentence = sentence.trim() + '.';
-      if (trimmedSentence.length > 1) {
-        queueData.queue.push({ text: trimmedSentence, t0: t0 });
-      }
-    });
-    
-    if (!queueData.isProcessing) {
-      processTTSQueue(sessionId);
-    }
+    console.log(`   After: ${conversationHistory.get(sessionId).length} messages`);
+    console.log(`   Added: AI Assistant: "${llmResponse}"`);
     
     console.log('\n' + '='.repeat(80) + '\n');
     
   } catch (error) {
-    console.error('\n❌ processWithLLMContextAware ERROR:', error.message);
+    console.error('\n❌ LLM ERROR:', error.message);
     console.error('Full error:', error);
     console.log('\n' + '='.repeat(80) + '\n');
   }
@@ -2453,7 +2436,7 @@ if (data.is_final && data.speech_final) {
           console.log('\n🤖 SENDING TO LLM FOR DECISION...');
           console.log('-'.repeat(80));
           
-         processWithLLMContextAware(sessionId, fullText, speakerId, t0);
+          processWithLLMContextAware(sessionId, t0);
           
           lastProcessedTranscript = fullText;
           
@@ -2486,7 +2469,7 @@ if (data.is_final && data.speech_final) {
             }).catch(err => console.error('Pusher error:', err));
             
             addToHistory(sessionId, speakerId, fullText);
-           processWithLLMContextAware(sessionId, fullText, speakerId, t0);
+            processWithLLMContextAware(sessionId, t0);
             
             // Clear buffer
             incompleteTranscripts.delete(sessionId);
@@ -2506,7 +2489,7 @@ if (data.is_final && data.speech_final) {
         }).catch(err => console.error('Pusher error:', err));
         
         addToHistory(sessionId, speakerId, fullText);
-        processWithLLMContextAware(sessionId, fullText, speakerId, t0);
+        processWithLLMContextAware(sessionId, t0);
         
         incompleteTranscripts.delete(sessionId);
         lastProcessedTranscript = fullText;
@@ -2538,7 +2521,7 @@ if (data.is_final && data.speech_final) {
       console.log('\n🤖 SENDING TO LLM FOR DECISION...');
       console.log('-'.repeat(80));
       
-      processWithLLMContextAware(sessionId, transcript, speakerId, t0);
+      processWithLLMContextAware(sessionId, t0);
       
       lastProcessedTranscript = transcript;
     }
@@ -2628,7 +2611,7 @@ else if (data.is_final && !data.speech_final) {
           console.log('\n🤖 SENDING TO LLM FOR DECISION...');
           console.log('-'.repeat(80));
           
-         processWithLLMContextAware(sessionId, fullText, speakerId, t0);
+          processWithLLMContextAware(sessionId, t0);
           
           lastProcessedTranscript = fullText;
           
@@ -2654,7 +2637,7 @@ else if (data.is_final && !data.speech_final) {
             }).catch(err => console.error('Pusher error:', err));
             
             addToHistory(sessionId, speakerId, fullText);
-           processWithLLMContextAware(sessionId, fullText, speakerId, Date.now());
+            processWithLLMContextAware(sessionId, Date.now());
             
             // Clear buffer
             incompleteTranscripts.delete(sessionId);
@@ -2716,7 +2699,7 @@ else if (data.is_final && !data.speech_final) {
           console.log('\n🤖 SENDING TO LLM FOR DECISION...');
           console.log('-'.repeat(80));
           
-          processWithLLMContextAware(sessionId, transcript, speakerId, t0);
+          processWithLLMContextAware(sessionId, t0);
           
           lastProcessedTranscript = transcript;
           
@@ -2879,25 +2862,18 @@ app.use((req, res) => {
 
 const startServer = async () => {
   const PORT = process.env.PORT || 3000;
-  
-  // Initialize documents BEFORE starting server
-  console.log('🚀 Initializing server...\n');
-  
-  try {
-    await documentRAG.initialize();
-    console.log(`✅ Document RAG initialized (${documentRAG.getVectorStoreSize()} chunks loaded)\n`);
-  } catch (error) {
-    console.error('❌ Document RAG initialization failed:', error.message);
-    console.log('⚠️  Continuing without document search capability\n');
-  }
-  
-  server.listen(PORT, () => {
-    console.log(`🚀 Server running on port ${PORT}`);
-    console.log(`🌐 HTTP: http://localhost:${PORT}`);
-    console.log(`🔌 WebSocket: ws://localhost:${PORT}`);
-  });
+ server.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`🌐 HTTP: http://localhost:${PORT}`);
+  console.log(`🔌 WebSocket: ws://localhost:${PORT}`);
+});
+// Initialize documents on startup
+initializeDocuments().then(() => {
+  console.log('📚 Documents ready for RAG');
+}).catch(err => {
+  console.error('❌ Document initialization failed:', err);
+});
 };
-
 
 if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
   startServer();
