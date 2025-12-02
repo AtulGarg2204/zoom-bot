@@ -2873,6 +2873,14 @@ initializeDocuments().then(() => {
 }).catch(err => {
   console.error('❌ Document initialization failed:', err);
 });
+setTimeout(async () => {
+    try {
+      await startCalendarWatch();
+      console.log('✅ Calendar watch auto-started on server boot');
+    } catch (err) {
+      console.error('❌ Auto-start calendar watch failed:', err.message);
+    }
+  }, 3000); // Wait 3 seconds for server to stabilize
 };
 
 if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
