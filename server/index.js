@@ -140,152 +140,69 @@ let calendarResourceId = null;
 // ============================================================
 // ROUTER SYSTEM PROMPT
 // ============================================================
-
-const ROUTER_SYSTEM_PROMPT = `
-You are James, a friendly and helpful AI Assistant in meetings.
+const SILENT_DECISION_PROMPT = `You are James, a friendly and helpful AI Assistant in a natural conversation. Speakers are labeled as Speaker 0, Speaker 1, etc.
 
 YOUR IDENTITY:
 - Your name is James
 - You are the ONLY AI assistant in this meeting
-- When someone asks your name, say "I'm James"
 - You can be called James, bot, or assistant
 
-YOUR PERSONALITY (when responding):
-- Warm, approachable, and conversational
-- Natural and human-like (not robotic)
-- Helpful but not overly formal
-- Use natural conversation fillers: "Oh", "Well", "You know", "Actually", "Hmm"
-- Add warmth: "Great question!", "I'd be happy to help", "That's interesting!"
-- Keep responses conversational (10-20 words for natural flow)
-- Use contractions: "I'm" not "I am", "That's" not "That is"
+CRITICAL: WHEN TO RESPOND
+1. **IF someone mentions James and wants you to respond → ALWAYS RESPOND**
+2. Someone says "James", "bot", "assistant", or "AI" → Respond
+3. Someone asks you a direct question → Respond
+4. Follow-up after you just spoke → Continue conversation
+5. People talking to EACH OTHER (without mentioning you) → Say only "SILENT"
+6. Unclear who is being addressed (and "James" NOT mentioned) → Say only "SILENT"
 
-YOUR JOB:
-1. Decide WHERE to get information from
-2. IF source is "SELF", also provide the response directly
+IMPORTANT:
+- Analyze conversation context to see who the user was just talking to
+- If user just talked to James → follow-up questions are for James
+- If user just talked to someone else → stay SILENT
+- **IF YOUR NAME IS SAID, YOU MUST RESPOND**
+- If conversation is between others AND your name is NOT mentioned, say "SILENT"
+- Output ONLY: "RESPOND" or "SILENT" (nothing else)`;
 
-You have four possible sources:
-- "SELF": Your own general knowledge - respond directly in "response" field
-- "KB": Internal knowledge base (uploaded documents/PDFs) - leave "response" null
-- "WEB": Up-to-date public web search - leave "response" null  
-- "SILENT": Don't respond (conversation between others) - leave "response" null
+const ROUTER_SYSTEM_PROMPT = `You are a routing engine for James, an AI Assistant.
+
+Your job:
+- Decide where the Assistant should look for information to answer a user's question.
+- You have three possible sources:
+  - "SELF": The model's own general knowledge.
+  - "KB": The organization's internal knowledge base (private docs/PDFs).
+  - "WEB": Up-to-date public web search.
 
 You MUST return a JSON object with this exact schema:
 
 {
-  "sources": ["SELF"],                     // non-empty subset of ["SELF","KB","WEB","SILENT"]
-  "response": "Your natural response",     // ONLY if sources contains "SELF", otherwise null
-  "reason": "short explanation here",      // <= 2 sentences
-  "urgency": "low"                         // one of: "low", "medium", "high"
-}
-
-ROUTING GUIDELINES:
-
-**SILENT - Use when:**
-- Message is NOT addressed to you (James)
-- People talking to EACH OTHER without mentioning you
-- Unclear who is being addressed AND your name is NOT mentioned
-- Examples:
-  * "Hey Sarah, how are you?" → SILENT
-  * "Bob, did you finish the report?" → SILENT
-  * "That's a great point!" (unclear, no "James" mentioned) → SILENT
-
-**SELF - Use when:**
-- General knowledge questions (math, facts, concepts, definitions)
-- Someone mentions "James", "bot", "assistant" and asks a general question
-- Direct questions that don't need documents or web search
-- Follow-up questions after you just spoke
-
-
-**KB - Use when:**
-- Question about internal documents, uploaded PDFs
-- Asking for "my resume", "my information", "the document", "my phone number"
-- Company-specific, personal, or internal information
-
-
-
-**WEB - Use when:**
-- Time-sensitive questions
-- Asks for "latest", "today", "current", "this year", "right now"
-- News, prices, live data, recent events
-
-
-**IMPORTANT RULES:**
-
-1. **IF someone says "James" and wants you to respond → ALWAYS route to appropriate source** (don't say SILENT)
-
-2. **For SELF routing:** Include natural, conversational response in "response" field
-   - Be warm and friendly
-   - Use contractions and fillers
-   - Keep it 10-20 words
-   - Examples:
-     * "Oh, that's four!"
-     * "I'm doing great, thanks for asking!"
-     * "Cricket's a fascinating game with two teams competing!"
-
-3. **For KB/WEB/SILENT:** Set "response" to null
-
-4. **You may combine sources** (e.g., ["KB","SELF"] or ["WEB","SELF"]) if that makes sense
-
-5. **Always include at least one source** in "sources"
-
-6. **urgency** refers to time-sensitivity:
-   - "high": information changes frequently (news, markets, latest events)
-   - "medium": policies/procedures that change occasionally
-   - "low": stable concepts, timeless knowledge
-
-EXAMPLES:
-
-User: "Hey Sarah, how are you?"
-Output:
-{
-  "sources": ["SILENT"],
-  "response": null,
-  "reason": "Conversation between other participants, not addressed to James",
-  "urgency": "low"
-}
-
-User: "James, what's 2+2?"
-Output:
-{
   "sources": ["SELF"],
-  "response": "Oh, that's four!",
-  "reason": "Simple math question, general knowledge",
+  "response": "Natural conversational response here",
+  "reason": "short explanation here",
   "urgency": "low"
 }
 
-User: "James, what's my phone number?"
-Output:
-{
-  "sources": ["KB"],
-  "response": null,
-  "reason": "Personal information likely stored in uploaded documents",
-  "urgency": "medium"
-}
+Guidelines:
+- Use "KB" when the question is clearly about internal policies, company-specific processes, internal tools, uploaded documents, "my information", "my resume", "the document".
+- Use "WEB" when the question is time-sensitive, asks for "latest", "today", "current", "this year", news, prices, live metrics, or recent events.
+- Use "SELF" for general knowledge or conceptual questions where no internal or fresh web info is required.
+- You may combine sources (e.g., ["KB","SELF"] or ["WEB","SELF"]) if that makes sense.
+- Always include at least one source in "sources".
+- "urgency" refers to time-sensitivity:
+  - "high": information likely changes frequently (news, markets, regulation updates, "latest").
+  - "medium": policies/procedures that change occasionally or impact important decisions.
+  - "low": stable concepts, timeless knowledge.
 
-User: "What's the weather today?"
-Output:
-{
-  "sources": ["WEB"],
-  "response": null,
-  "reason": "Current weather requires real-time data",
-  "urgency": "high"
-}
-
-User: "James, tell me about cricket"
-Output:
-{
-  "sources": ["SELF"],
-  "response": "Cricket's a bat-and-ball sport, really popular in countries like India and England!",
-  "reason": "General knowledge about sports",
-  "urgency": "low"
-}
+PERSONALITY (when sources contains "SELF"):
+- Warm, approachable, conversational
+- Use contractions: "I'm", "That's", "It's"
+- Use fillers: "Oh", "Well", "Actually"
+- Keep response 10-20 words
+- Include response in "response" field
 
 CRITICAL:
-- Output ONLY valid JSON, with DOUBLE quotes and NO extra text before or after
-- When sources contains "SELF", MUST include natural response in "response" field
-- When sources is KB/WEB/SILENT, "response" must be null
-- Never say "Yes, I should respond" or explain your reasoning in the response field
-`;
+- For SELF: Include natural response in "response" field
+- For KB/WEB: Set "response" to null
+- Output ONLY valid JSON, with DOUBLE quotes and NO extra text before or after.`;
 // Helper function to add messages to conversation history with speaker labels
 function addToHistory(sessionId, speaker, message) {
   if (!conversationHistory.has(sessionId)) {
@@ -312,105 +229,58 @@ async function processWithLLMContextAware(sessionId, t0) {
     
     const history = conversationHistory.get(sessionId);
     
-    // Build conversation context
     const conversationContext = history.map(msg => {
       return `${msg.speaker}: ${msg.content}`;
     }).join('\n');
     
-    const t_router_start = Date.now();
-    
     console.log('\n' + '🧭'.repeat(40));
-    console.log('🧭 ROUTER + LLM DECISION (SINGLE CALL)');
+    console.log('🧭 TWO-STEP DECISION PROCESS');
     console.log('🧭'.repeat(40));
-    console.log(`\n⏱️  [${t_router_start - t0}ms] Router Request Starting...`);
-    console.log('🦙 Model: Llama 4 Maverick 17B');
     
-    console.log('\n📜 CONVERSATION CONTEXT:');
-    console.log('┌' + '─'.repeat(78) + '┐');
-    if (conversationContext.length > 0) {
-      conversationContext.split('\n').forEach(line => {
-        console.log('│ ' + line.substring(0, 77).padEnd(77) + '│');
-      });
-    } else {
-      console.log('│ ' + '(No conversation history yet)'.padEnd(77) + '│');
-    }
-    console.log('└' + '─'.repeat(78) + '┘');
-    
-    // Get last user message for routing
     const lastUserMessage = history.length > 0 
       ? history[history.length - 1].content 
       : '';
     
-    console.log('\n📝 Last User Message:', `"${lastUserMessage}"`);
-    
     // ============================================================
-    // ROUTER CALL - Returns JSON with routing decision + response
+    // STEP 1: SILENT/RESPOND DECISION
     // ============================================================
     
-    const routerResponse = await groq.chat.completions.create({
+    const t_silent_start = Date.now();
+    console.log(`\n⏱️  [${t_silent_start - t0}ms] STEP 1: Checking if should respond...`);
+    
+    const silentResponse = await groq.chat.completions.create({
       model: 'meta-llama/llama-4-maverick-17b-128e-instruct',
       messages: [
         {
           role: 'system',
-          content: ROUTER_SYSTEM_PROMPT
+          content: SILENT_DECISION_PROMPT
         },
         {
           role: 'user',
-          content: `Conversation context:\n${conversationContext}\n\nLast user message: "${lastUserMessage}"\n\nDecide routing and return ONLY JSON.`
+          content: `Conversation:\n${conversationContext}\n\nShould James respond? Output ONLY: "RESPOND" or "SILENT"`
         }
       ],
       temperature: 0.3,
-      max_completion_tokens: 500,
-      stream: false,
-      response_format: { type: "json_object" }
+      max_completion_tokens: 10,
+      stream: false
     });
     
-    const t_router_end = Date.now();
-    console.log(`\n⏱️  [${t_router_end - t0}ms] Router Response Received`);
-    console.log(`⏱️  Router took: ${t_router_end - t_router_start}ms`);
+    const silentDecision = silentResponse.choices[0].message.content.trim().toUpperCase();
     
-    // Parse JSON response
-    const rawText = routerResponse.choices[0].message.content.trim();
-    console.log('\n📥 Raw Router Response:', rawText);
+    const t_silent_end = Date.now();
+    console.log(`⏱️  [${t_silent_end - t0}ms] STEP 1 Complete: ${silentDecision}`);
+    console.log(`⏱️  Step 1 took: ${t_silent_end - t_silent_start}ms`);
     
-    let decision;
-    try {
-      decision = JSON.parse(rawText);
-    } catch (parseError) {
-      console.error('❌ JSON Parse Error:', parseError.message);
-      console.log('⚠️  Fallback: Treating as SELF with raw text');
-      
-      // Fallback: treat as SELF
-      decision = {
-        sources: ["SELF"],
-        response: rawText,
-        reason: "JSON parse failed, using raw response",
-        urgency: "low"
-      };
-    }
-    
-    console.log('\n🎯 ROUTER DECISION:');
-    console.log('┌' + '─'.repeat(78) + '┐');
-    console.log('│ ' + `Sources: ${JSON.stringify(decision.sources)}`.padEnd(77) + '│');
-    console.log('│ ' + `Reason: ${decision.reason}`.substring(0, 77).padEnd(77) + '│');
-    console.log('│ ' + `Urgency: ${decision.urgency}`.padEnd(77) + '│');
-    if (decision.response) {
-      console.log('│ ' + `Response: "${decision.response}"`.substring(0, 77).padEnd(77) + '│');
-    }
-    console.log('└' + '─'.repeat(78) + '┘');
-    
-    const primarySource = decision.sources[0];
     const channel = `session-${sessionId}`;
     
     // ============================================================
-    // HANDLE ROUTING DECISION
+    // HANDLE SILENT DECISION
     // ============================================================
     
-    if (primarySource === "SILENT") {
-      console.log('\n🤫 ROUTE: SILENT');
-      console.log('   Action: Not responding (conversation between others)');
+    if (silentDecision === "SILENT") {
+      console.log('\n🤫 DECISION: STAY SILENT');
+      console.log('   Reason: Conversation between other participants');
       
-      // Clear TTS queue if any
       const queueData = ttsQueue.get(sessionId);
       if (queueData) {
         queueData.queue = [];
@@ -430,28 +300,79 @@ async function processWithLLMContextAware(sessionId, t0) {
     }
     
     // ============================================================
-    // ROUTE: SELF (Respond directly using included response)
+    // STEP 2: ROUTING DECISION (SELF/KB/WEB)
+    // ============================================================
+    
+    const t_router_start = Date.now();
+    console.log(`\n⏱️  [${t_router_start - t0}ms] STEP 2: Deciding routing (SELF/KB/WEB)...`);
+    
+    const routerResponse = await groq.chat.completions.create({
+      model: 'meta-llama/llama-4-maverick-17b-128e-instruct',
+      messages: [
+        {
+          role: 'system',
+          content: ROUTER_SYSTEM_PROMPT
+        },
+        {
+          role: 'user',
+          content: `User question: "${lastUserMessage}"\n\nDecide routing and return ONLY JSON.`
+        }
+      ],
+      temperature: 0.3,
+      max_completion_tokens: 500,
+      stream: false,
+      response_format: { type: "json_object" }
+    });
+    
+    const t_router_end = Date.now();
+    console.log(`⏱️  [${t_router_end - t0}ms] STEP 2 Complete`);
+    console.log(`⏱️  Step 2 took: ${t_router_end - t_router_start}ms`);
+    
+    const rawText = routerResponse.choices[0].message.content.trim();
+    console.log('\n📥 Raw Router Response:', rawText);
+    
+    let decision;
+    try {
+      decision = JSON.parse(rawText);
+    } catch (parseError) {
+      console.error('❌ JSON Parse Error:', parseError.message);
+      decision = {
+        sources: ["SELF"],
+        response: rawText,
+        reason: "JSON parse failed",
+        urgency: "low"
+      };
+    }
+    
+    console.log('\n🎯 ROUTING DECISION:');
+    console.log('┌' + '─'.repeat(78) + '┐');
+    console.log('│ ' + `Sources: ${JSON.stringify(decision.sources)}`.padEnd(77) + '│');
+    console.log('│ ' + `Reason: ${decision.reason}`.substring(0, 77).padEnd(77) + '│');
+    console.log('│ ' + `Urgency: ${decision.urgency}`.padEnd(77) + '│');
+    if (decision.response) {
+      console.log('│ ' + `Response: "${decision.response}"`.substring(0, 77).padEnd(77) + '│');
+    }
+    console.log('└' + '─'.repeat(78) + '┘');
+    
+    const primarySource = decision.sources[0];
+    
+    // ============================================================
+    // ROUTE: SELF
     // ============================================================
     
     if (primarySource === "SELF") {
-      console.log('\n✅ ROUTE: SELF');
-      console.log('   Action: Using general knowledge');
+      console.log('\n✅ ROUTE: SELF (General Knowledge)');
       
       const responseText = decision.response || "I'm not sure how to respond to that.";
       
       console.log(`   Response: "${responseText}"`);
       
-      // Send to frontend via Pusher
       await pusher.trigger(channel, 'ai-response', {
         text: responseText
       });
-      console.log('   ✅ Sent AI response to frontend via Pusher');
       
-      // Add to conversation history
       addToHistory(sessionId, 'AI Assistant', responseText);
-      console.log('   ✅ Added to conversation history');
       
-      // Add to TTS queue for audio generation
       if (!ttsQueue.has(sessionId)) {
         ttsQueue.set(sessionId, { queue: [], isProcessing: false });
       }
@@ -463,38 +384,31 @@ async function processWithLLMContextAware(sessionId, t0) {
         processTTSQueue(sessionId);
       }
       
-      console.log('   ✅ Added to TTS queue');
+      console.log('   ✅ Processing complete');
       console.log('\n' + '='.repeat(80) + '\n');
       
       return;
     }
     
     // ============================================================
-    // ROUTE: KB (Search documents)
+    // ROUTE: KB
     // ============================================================
     
     if (primarySource === "KB") {
       console.log('\n📚 ROUTE: KB (Knowledge Base)');
-      console.log('   Action: Searching internal documents...');
       
-      // Send "searching documents" status to frontend
       await pusher.trigger(channel, 'bot-searching', {
         type: 'documents',
         message: 'Looking into documents, please wait...',
         urgency: decision.urgency
       });
-      console.log('   ✅ Sent "searching documents" status to frontend');
       
-      // Wait 5-10 seconds (so user can ask another question)
-      const waitTime = 7000; // 7 seconds
+      const waitTime = 7000;
       console.log(`   ⏳ Waiting ${waitTime/1000} seconds...`);
       await new Promise(resolve => setTimeout(resolve, waitTime));
       
-      // TODO: Implement RAG search here later
       console.log('   ⚠️  KB search not implemented yet');
-      console.log('   📝 Will implement: PDF processing + embeddings + semantic search');
       
-      // For now, send a placeholder response
       const placeholderResponse = "I don't have access to documents yet, but this feature is coming soon!";
       
       await pusher.trigger(channel, 'ai-response', {
@@ -517,31 +431,24 @@ async function processWithLLMContextAware(sessionId, t0) {
     }
     
     // ============================================================
-    // ROUTE: WEB (Search web)
+    // ROUTE: WEB
     // ============================================================
     
     if (primarySource === "WEB") {
       console.log('\n🌐 ROUTE: WEB (Web Search)');
-      console.log('   Action: Searching the web...');
       
-      // Send "searching web" status to frontend
       await pusher.trigger(channel, 'bot-searching', {
         type: 'web',
         message: 'Searching the web for latest information, please wait...',
         urgency: decision.urgency
       });
-      console.log('   ✅ Sent "searching web" status to frontend');
       
-      // Wait 5-10 seconds (so user can ask another question)
-      const waitTime = 7000; // 7 seconds
+      const waitTime = 7000;
       console.log(`   ⏳ Waiting ${waitTime/1000} seconds...`);
       await new Promise(resolve => setTimeout(resolve, waitTime));
       
-      // TODO: Implement web search here later
       console.log('   ⚠️  WEB search not implemented yet');
-      console.log('   📝 Will implement: Web search API integration');
       
-      // For now, send a placeholder response
       const placeholderResponse = "I don't have web search access yet, but this feature is coming soon!";
       
       await pusher.trigger(channel, 'ai-response', {
@@ -563,30 +470,10 @@ async function processWithLLMContextAware(sessionId, t0) {
       return;
     }
     
-    // If we reach here, unknown route
     console.log('\n⚠️  UNKNOWN ROUTE:', primarySource);
-    console.log('   Falling back to SELF behavior');
-    
-    const fallbackResponse = "I'm not sure how to help with that.";
-    
-    await pusher.trigger(channel, 'ai-response', {
-      text: fallbackResponse
-    });
-    
-    addToHistory(sessionId, 'AI Assistant', fallbackResponse);
-    
-    const queueData = ttsQueue.get(sessionId) || { queue: [], isProcessing: false };
-    ttsQueue.set(sessionId, queueData);
-    queueData.queue.push({ text: fallbackResponse, t0: t0 });
-    
-    if (!queueData.isProcessing) {
-      processTTSQueue(sessionId);
-    }
-    
-    console.log('\n' + '='.repeat(80) + '\n');
     
   } catch (error) {
-    console.error('\n❌ ROUTER ERROR:', error.message);
+    console.error('\n❌ ERROR:', error.message);
     console.error('Full error:', error);
     console.log('\n' + '='.repeat(80) + '\n');
   }
