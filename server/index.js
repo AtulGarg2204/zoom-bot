@@ -167,6 +167,7 @@ const ROUTER_SYSTEM_PROMPT = `You are a routing engine for James, an AI Assistan
 
 Your job:
 - Decide where the Assistant should look for information to answer a user's question.
+- **IMPORTANT:** Use the full conversation context to understand what the user is asking about.
 - You have three possible sources:
   - "SELF": The model's own general knowledge.
   - "KB": The organization's internal knowledge base (private docs/PDFs).
@@ -182,6 +183,7 @@ You MUST return a JSON object with this exact schema:
 }
 
 Guidelines:
+- **CRITICAL:** Analyze the full conversation to understand context and references (like "it", "that", "this")
 - Use "KB" when the question is clearly about internal policies, company-specific processes, internal tools, uploaded documents, "my information", "my resume", "the document".
 - Use "WEB" when the question is time-sensitive, asks for "latest", "today", "current", "this year", news, prices, live metrics, or recent events.
 - Use "SELF" for general knowledge or conceptual questions where no internal or fresh web info is required.
@@ -198,9 +200,10 @@ PERSONALITY (when sources contains "SELF"):
 - Use fillers: "Oh", "Well", "Actually"
 - Keep response 10-20 words
 - Include response in "response" field
+- **Use conversation context to provide relevant, contextual responses**
 
 CRITICAL:
-- For SELF: Include natural response in "response" field
+- For SELF: Include natural response in "response" field (use context to understand what user is asking about)
 - For KB/WEB: Set "response" to null
 - Output ONLY valid JSON, with DOUBLE quotes and NO extra text before or after.`;
 // Helper function to add messages to conversation history with speaker labels
@@ -299,30 +302,37 @@ async function processWithLLMContextAware(sessionId, t0) {
       return;
     }
     
-    // ============================================================
-    // STEP 2: ROUTING DECISION (SELF/KB/WEB)
-    // ============================================================
-    
     const t_router_start = Date.now();
-    console.log(`\n⏱️  [${t_router_start - t0}ms] STEP 2: Deciding routing (SELF/KB/WEB)...`);
-    
-    const routerResponse = await groq.chat.completions.create({
-      model: 'meta-llama/llama-4-maverick-17b-128e-instruct',
-      messages: [
-        {
-          role: 'system',
-          content: ROUTER_SYSTEM_PROMPT
-        },
-        {
-          role: 'user',
-          content: `User question: "${lastUserMessage}"\n\nDecide routing and return ONLY JSON.`
-        }
-      ],
-      temperature: 0.3,
-      max_completion_tokens: 500,
-      stream: false,
-      response_format: { type: "json_object" }
-    });
+console.log(`\n⏱️  [${t_router_start - t0}ms] STEP 2: Deciding routing (SELF/KB/WEB)...`);
+
+console.log('\n📜 CONVERSATION CONTEXT FOR ROUTING:');
+console.log('┌' + '─'.repeat(78) + '┐');
+if (conversationContext.length > 0) {
+  conversationContext.split('\n').forEach(line => {
+    console.log('│ ' + line.substring(0, 77).padEnd(77) + '│');
+  });
+} else {
+  console.log('│ ' + '(No conversation history yet)'.padEnd(77) + '│');
+}
+console.log('└' + '─'.repeat(78) + '┘');
+
+const routerResponse = await groq.chat.completions.create({
+  model: 'meta-llama/llama-4-maverick-17b-128e-instruct',
+  messages: [
+    {
+      role: 'system',
+      content: ROUTER_SYSTEM_PROMPT
+    },
+    {
+      role: 'user',
+      content: `Conversation context:\n${conversationContext}\n\nLast user message: "${lastUserMessage}"\n\nBased on the full conversation context, decide routing and return ONLY JSON.`
+    }
+  ],
+  temperature: 0.3,
+  max_completion_tokens: 500,
+  stream: false,
+  response_format: { type: "json_object" }
+});
     
     const t_router_end = Date.now();
     console.log(`⏱️  [${t_router_end - t0}ms] STEP 2 Complete`);
