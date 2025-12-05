@@ -470,7 +470,27 @@
                         showResponse(data.text);
                     }
                 });
-                
+                channel.bind('bot-searching', (data) => {
+  console.log('🔍 Received bot-searching event:', data);
+  
+  const statusInfo = document.getElementById('statusInfo');
+  
+  if (data.type === 'documents') {
+    statusInfo.textContent = '📚 Looking into documents...';
+    statusInfo.style.color = '#2196f3';
+    showNotification('📚 Searching documents...');
+  } else if (data.type === 'web') {
+    statusInfo.textContent = '🌐 Searching the web...';
+    statusInfo.style.color = '#ff9800';
+    showNotification('🌐 Searching web...');
+  }
+  
+  // Reset after the message is done
+  setTimeout(() => {
+    statusInfo.textContent = 'Speak now';
+    statusInfo.style.color = '#666';
+  }, 10000);
+});
                 connectAudioWebSocket();
                 
                 setInterval(() => {
