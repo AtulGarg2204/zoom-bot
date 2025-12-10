@@ -49,6 +49,10 @@ const openai = new OpenAI({
 // In-memory storage (no database for testing)
 let documentChunks = [];
 
+// ============================================================================
+// MAIN FUNCTIONS
+// ============================================================================
+
 /**
  * Load and process all PDFs from documents folder on startup
  */
@@ -83,16 +87,19 @@ async function initializeDocuments() {
     }
     
     console.log('\n✅ DOCUMENT PROCESSING COMPLETE');
+    console.log(`   Total documents: ${new Set(documentChunks.map(c => c.documentName)).size}`);
     console.log(`   Total chunks stored: ${documentChunks.length}`);
+    console.log(`   Embedding dimensions: ${documentChunks[0]?.embedding.length || 0}`);
     console.log('='.repeat(80) + '\n');
     
   } catch (error) {
     console.error('❌ Error initializing documents:', error.message);
+    console.error('Stack trace:', error.stack);
   }
 }
 
 /**
- * Process a single PDF and store chunks with embeddings (using PDFParse V2 API)
+ * Process a single PDF and store chunks with embeddings (PARALLEL EMBEDDING)
  */
 async function processAndStorePDF(filePath, fileName) {
   try {
@@ -102,64 +109,138 @@ async function processAndStorePDF(filePath, fileName) {
     // Read PDF using PDFParse V2 API
     const dataBuffer = fs.readFileSync(filePath);
     
+    console.log('   📄 Parsing PDF...');
     const parser = new PDFParse({ data: dataBuffer });
+    
+    console.log('   📊 Getting document info...');
     const info = await parser.getInfo({ parsePageInfo: true });
+    
+    console.log('   📝 Extracting text...');
     const textResult = await parser.getText();
+    
     await parser.destroy();
     
     const fullText = textResult.text;
     const totalPages = info.total;
     
-    console.log(`   Pages: ${totalPages}`);
-    console.log(`   Characters: ${fullText.length}`);
+    console.log(`   ✅ Pages: ${totalPages}`);
+    console.log(`   ✅ Characters: ${fullText.length}`);
     
-    // Split into chunks (simple chunking: ~1000 chars with overlap)
+    if (fullText.length === 0) {
+      console.log('   ⚠️  Warning: No text extracted from PDF');
+      return;
+    }
+    
+    // Split into chunks
     const chunks = splitIntoChunks(fullText, 1000, 200);
     
-    console.log(`   Created ${chunks.length} chunks`);
-    console.log('   Generating embeddings...');
+    console.log(`   ✅ Created ${chunks.length} chunks`);
+    console.log('   🚀 Generating embeddings in parallel (batch size: 10)...');
     
-    // Generate embeddings for each chunk
-    for (let i = 0; i < chunks.length; i++) {
-      const chunkText = chunks[i];
+    const startTime = Date.now();
+    
+    // ============================================================
+    // PARALLEL EMBEDDING GENERATION (BATCH SIZE: 10)
+    // ============================================================
+    
+    const BATCH_SIZE = 10;
+    const validChunks = chunks.filter(chunk => chunk.trim().length >= 50);
+    
+    console.log(`   📊 Valid chunks: ${validChunks.length}/${chunks.length}`);
+    
+    const allChunksWithEmbeddings = [];
+    
+    for (let i = 0; i < validChunks.length; i += BATCH_SIZE) {
+      const batch = validChunks.slice(i, i + BATCH_SIZE);
+      const batchNumber = Math.floor(i / BATCH_SIZE) + 1;
+      const totalBatches = Math.ceil(validChunks.length / BATCH_SIZE);
       
-      // Skip empty chunks
-      if (chunkText.trim().length < 50) {
-        continue;
-      }
+      console.log(`   🔄 Processing batch ${batchNumber}/${totalBatches} (${batch.length} chunks)...`);
+      
+      // Generate embeddings for all chunks in this batch IN PARALLEL
+      const embeddingPromises = batch.map(chunkText => generateEmbedding(chunkText));
       
       try {
-        const embedding = await generateEmbedding(chunkText);
+        const embeddings = await Promise.all(embeddingPromises);
         
-        documentChunks.push({
-          id: `${fileName}-chunk-${i}`,
-          documentName: fileName,
-          chunkIndex: i,
-          text: chunkText,
-          embedding: embedding,
-          metadata: {
-            fileName: fileName,
-            chunkNumber: i + 1,
-            totalChunks: chunks.length,
-            totalPages: totalPages
-          }
+        // Store chunks with their embeddings
+        batch.forEach((chunkText, idx) => {
+          const globalIndex = i + idx;
+          
+          allChunksWithEmbeddings.push({
+            id: `${fileName}-chunk-${globalIndex}`,
+            documentName: fileName,
+            chunkIndex: globalIndex,
+            text: chunkText,
+            embedding: embeddings[idx],
+            metadata: {
+              fileName: fileName,
+              chunkNumber: globalIndex + 1,
+              totalChunks: validChunks.length,
+              totalPages: totalPages
+            }
+          });
         });
         
-        if ((i + 1) % 5 === 0) {
-          console.log(`   Processed ${i + 1}/${chunks.length} chunks...`);
-        }
+        console.log(`      ✅ Batch ${batchNumber} complete`);
         
       } catch (error) {
-        console.error(`   ❌ Error processing chunk ${i}:`, error.message);
+        console.error(`      ❌ Error in batch ${batchNumber}:`, error.message);
+        
+        // Fallback: Process this batch sequentially if parallel fails
+        console.log(`      🔄 Retrying batch ${batchNumber} sequentially...`);
+        
+        for (let j = 0; j < batch.length; j++) {
+          try {
+            const embedding = await generateEmbedding(batch[j]);
+            const globalIndex = i + j;
+            
+            allChunksWithEmbeddings.push({
+              id: `${fileName}-chunk-${globalIndex}`,
+              documentName: fileName,
+              chunkIndex: globalIndex,
+              text: batch[j],
+              embedding: embedding,
+              metadata: {
+                fileName: fileName,
+                chunkNumber: globalIndex + 1,
+                totalChunks: validChunks.length,
+                totalPages: totalPages
+              }
+            });
+            
+          } catch (chunkError) {
+            console.error(`      ❌ Failed to process chunk ${i + j}:`, chunkError.message);
+          }
+        }
+      }
+      
+      // Small delay between batches to avoid rate limits
+      if (i + BATCH_SIZE < validChunks.length) {
+        await new Promise(resolve => setTimeout(resolve, 200));
       }
     }
     
+    // Add all chunks to global storage
+    documentChunks.push(...allChunksWithEmbeddings);
+    
+    const endTime = Date.now();
+    const totalTime = ((endTime - startTime) / 1000).toFixed(2);
+    
     console.log(`   ✅ Successfully processed ${fileName}`);
+    console.log(`   📦 Stored ${allChunksWithEmbeddings.length} chunks`);
+    console.log(`   ⏱️  Total time: ${totalTime}s`);
+    console.log(`   ⚡ Speed: ${(allChunksWithEmbeddings.length / totalTime).toFixed(1)} chunks/second`);
     
   } catch (error) {
     console.error(`   ❌ Error processing ${fileName}:`, error.message);
+    console.error('   Stack trace:', error.stack);
   }
 }
+
+// ============================================================================
+// HELPER FUNCTIONS
+// ============================================================================
 
 /**
  * Split text into chunks with overlap
@@ -201,6 +282,10 @@ async function generateEmbedding(text) {
  * Calculate cosine similarity between two vectors
  */
 function cosineSimilarity(vecA, vecB) {
+  if (vecA.length !== vecB.length) {
+    throw new Error('Vectors must have same length');
+  }
+  
   let dotProduct = 0;
   let normA = 0;
   let normB = 0;
@@ -211,8 +296,16 @@ function cosineSimilarity(vecA, vecB) {
     normB += vecB[i] * vecB[i];
   }
   
+  if (normA === 0 || normB === 0) {
+    return 0;
+  }
+  
   return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
 }
+
+// ============================================================================
+// SEARCH FUNCTIONS
+// ============================================================================
 
 /**
  * Search for relevant chunks given a question
@@ -229,11 +322,11 @@ async function searchRelevantChunks(question, topK = 3) {
     }
     
     // Generate embedding for question
-    console.log('   Generating question embedding...');
+    console.log('   🔄 Generating question embedding...');
     const questionEmbedding = await generateEmbedding(question);
     
     // Calculate similarity with all chunks
-    console.log('   Calculating similarities...');
+    console.log('   🔄 Calculating similarities...');
     const results = documentChunks.map(chunk => ({
       ...chunk,
       similarity: cosineSimilarity(questionEmbedding, chunk.embedding)
@@ -247,8 +340,9 @@ async function searchRelevantChunks(question, topK = 3) {
     
     console.log(`\n   📊 Top ${topK} Results:`);
     topResults.forEach((result, idx) => {
-      console.log(`   ${idx + 1}. ${result.documentName} (Chunk ${result.chunkIndex + 1}) - Similarity: ${result.similarity.toFixed(4)}`);
-      console.log(`      Preview: ${result.text.substring(0, 100)}...`);
+      console.log(`   ${idx + 1}. ${result.documentName} (Chunk ${result.chunkIndex + 1})`);
+      console.log(`      Similarity: ${result.similarity.toFixed(4)}`);
+      console.log(`      Preview: "${result.text.substring(0, 100)}..."`);
     });
     console.log('='.repeat(80) + '\n');
     
@@ -256,6 +350,7 @@ async function searchRelevantChunks(question, topK = 3) {
     
   } catch (error) {
     console.error('❌ RAG search error:', error.message);
+    console.error('Stack trace:', error.stack);
     return [];
   }
 }
@@ -264,12 +359,15 @@ async function searchRelevantChunks(question, topK = 3) {
  * Get document statistics
  */
 function getDocumentStats() {
+  const uniqueDocs = new Set(documentChunks.map(c => c.documentName));
+  
   const stats = {
-    totalDocuments: new Set(documentChunks.map(c => c.documentName)).size,
+    totalDocuments: uniqueDocs.size,
     totalChunks: documentChunks.length,
     documents: []
   };
   
+  // Group chunks by document
   const docGroups = {};
   documentChunks.forEach(chunk => {
     if (!docGroups[chunk.documentName]) {
@@ -278,12 +376,17 @@ function getDocumentStats() {
     docGroups[chunk.documentName]++;
   });
   
+  // Build document list
   for (const [name, count] of Object.entries(docGroups)) {
     stats.documents.push({ name, chunks: count });
   }
   
   return stats;
 }
+
+// ============================================================================
+// EXPORTS
+// ============================================================================
 
 module.exports = {
   initializeDocuments,

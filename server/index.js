@@ -7,7 +7,7 @@ require('dotenv').config();
 const { createClient } = require('@deepgram/sdk');
 const Groq = require('groq-sdk');
 const { google } = require('googleapis');
-
+const { initializeDocuments, searchRelevantChunks, getDocumentStats } = require('./ragService');
 const app = express();
 const server = http.createServer(app); // ← ADD THIS
 const wss = new WebSocket.Server({ server });
@@ -404,81 +404,227 @@ const routerResponse = await groq.chat.completions.create({
     // ROUTE: KB
     // ============================================================
     
-    if (primarySource === "KB") {
-      console.log('\n📚 ROUTE: KB (Knowledge Base)');
+    // ============================================================
+// ============================================================
+// ROUTE: KB (Search documents)
+// ============================================================
+
+if (primarySource === "KB") {
+  console.log('\n📚 ROUTE: KB (Knowledge Base)');
+  console.log('   Action: Searching internal documents...');
+  
+  // Send "searching documents" status to frontend
+  await pusher.trigger(channel, 'bot-searching', {
+    type: 'documents',
+    message: 'Looking into documents, please wait...',
+    urgency: decision.urgency
+  });
+  console.log('   ✅ Sent "searching documents" status to frontend');
+  
+  // ✅ SPEAK: "Please give me some time..."
+  const searchingMessage = "Please give me some time, I'm going through the documents.";
+  
+  console.log(`   🔊 Speaking: "${searchingMessage}"`);
+  
+  // Add to conversation history
+  addToHistory(sessionId, 'AI Assistant', searchingMessage);
+  
+  // Send to frontend via Pusher
+  await pusher.trigger(channel, 'ai-response', {
+    text: searchingMessage
+  });
+  
+  // Add to TTS queue and wait for it to finish
+  if (!ttsQueue.has(sessionId)) {
+    ttsQueue.set(sessionId, { queue: [], isProcessing: false });
+  }
+  
+  const queueData = ttsQueue.get(sessionId);
+  queueData.queue.push({ text: searchingMessage, t0: t0 });
+  
+  if (!queueData.isProcessing) {
+    processTTSQueue(sessionId);
+  }
+  
+  // Wait for the message to be spoken (give it time)
+  await new Promise(resolve => setTimeout(resolve, 3000));
+  
+  console.log('   ✅ Searching message spoken');
+  
+  // NOW DO THE ACTUAL SEARCH
+  try {
+    // Search for relevant chunks
+    const relevantChunks = await searchRelevantChunks(lastUserMessage, 3);
+    
+    if (relevantChunks.length === 0) {
+      console.log('   ⚠️  No relevant chunks found');
       
-      await pusher.trigger(channel, 'bot-searching', {
-        type: 'documents',
-        message: 'Looking into documents, please wait...',
-        urgency: decision.urgency
-      });
-      
-      const waitTime = 7000;
-      console.log(`   ⏳ Waiting ${waitTime/1000} seconds...`);
-      await new Promise(resolve => setTimeout(resolve, waitTime));
-      
-      console.log('   ⚠️  KB search not implemented yet');
-      
-      const placeholderResponse = "I don't have access to documents yet, but this feature is coming soon!";
+      const noResultsResponse = "I couldn't find any relevant information in the documents. Could you rephrase your question?";
       
       await pusher.trigger(channel, 'ai-response', {
-        text: placeholderResponse
+        text: noResultsResponse
       });
       
-      addToHistory(sessionId, 'AI Assistant', placeholderResponse);
+      addToHistory(sessionId, 'AI Assistant', noResultsResponse);
       
-      const queueData = ttsQueue.get(sessionId) || { queue: [], isProcessing: false };
-      ttsQueue.set(sessionId, queueData);
-      queueData.queue.push({ text: placeholderResponse, t0: t0 });
+      queueData.queue.push({ text: noResultsResponse, t0: t0 });
       
       if (!queueData.isProcessing) {
         processTTSQueue(sessionId);
       }
       
       console.log('\n' + '='.repeat(80) + '\n');
-      
       return;
     }
     
-    // ============================================================
-    // ROUTE: WEB
-    // ============================================================
+    // Build context from relevant chunks
+    const context = relevantChunks
+      .map((chunk, idx) => `[Source ${idx + 1}: ${chunk.metadata.fileName}]\n${chunk.text}`)
+      .join('\n\n');
     
-    if (primarySource === "WEB") {
-      console.log('\n🌐 ROUTE: WEB (Web Search)');
-      
-      await pusher.trigger(channel, 'bot-searching', {
-        type: 'web',
-        message: 'Searching the web for latest information, please wait...',
-        urgency: decision.urgency
-      });
-      
-      const waitTime = 7000;
-      console.log(`   ⏳ Waiting ${waitTime/1000} seconds...`);
-      await new Promise(resolve => setTimeout(resolve, waitTime));
-      
-      console.log('   ⚠️  WEB search not implemented yet');
-      
-      const placeholderResponse = "I don't have web search access yet, but this feature is coming soon!";
-      
-      await pusher.trigger(channel, 'ai-response', {
-        text: placeholderResponse
-      });
-      
-      addToHistory(sessionId, 'AI Assistant', placeholderResponse);
-      
-      const queueData = ttsQueue.get(sessionId) || { queue: [], isProcessing: false };
-      ttsQueue.set(sessionId, queueData);
-      queueData.queue.push({ text: placeholderResponse, t0: t0 });
-      
-      if (!queueData.isProcessing) {
-        processTTSQueue(sessionId);
-      }
-      
-      console.log('\n' + '='.repeat(80) + '\n');
-      
-      return;
+    console.log('\n📄 CONTEXT BUILT:');
+    console.log(`   Total context length: ${context.length} characters`);
+    console.log(`   From ${relevantChunks.length} chunks`);
+    
+    // Generate response using LLM with context
+    console.log('\n🤖 Generating answer with LLM...');
+    
+    const ragResponse = await groq.chat.completions.create({
+      model: 'meta-llama/llama-4-maverick-17b-128e-instruct',
+      messages: [
+        {
+          role: 'system',
+          content: `You are James, a helpful AI assistant. Answer the user's question using ONLY the information provided in the context below. Be natural and conversational.
+
+CONTEXT FROM DOCUMENTS:
+${context}
+
+INSTRUCTIONS:
+- Answer directly and naturally
+- Use information ONLY from the context above
+- Keep response concise (20-30 words)
+- Use contractions: "I'm", "That's", "It's"
+- Use natural fillers: "Oh", "Well", "Actually"
+- Be warm and friendly
+- If context doesn't contain the answer, say "I don't see that specific information in the documents."`
+        },
+        {
+          role: 'user',
+          content: lastUserMessage
+        }
+      ],
+      temperature: 0.5,
+      max_completion_tokens: 200,
+      stream: false
+    });
+    
+    const ragAnswer = ragResponse.choices[0].message.content.trim();
+    
+    console.log(`   ✅ Answer generated: "${ragAnswer}"`);
+    
+    // Send to frontend
+    await pusher.trigger(channel, 'ai-response', {
+      text: ragAnswer
+    });
+    
+    // Add to conversation history
+    addToHistory(sessionId, 'AI Assistant', ragAnswer);
+    
+    // Add to TTS queue
+    queueData.queue.push({ text: ragAnswer, t0: t0 });
+    
+    if (!queueData.isProcessing) {
+      processTTSQueue(sessionId);
     }
+    
+    console.log('   ✅ KB search complete');
+    console.log('\n' + '='.repeat(80) + '\n');
+    
+  } catch (error) {
+    console.error('❌ KB search error:', error.message);
+    
+    const errorResponse = "I encountered an issue searching the documents. Please try again.";
+    
+    await pusher.trigger(channel, 'ai-response', {
+      text: errorResponse
+    });
+    
+    addToHistory(sessionId, 'AI Assistant', errorResponse);
+    
+    queueData.queue.push({ text: errorResponse, t0: t0 });
+    
+    if (!queueData.isProcessing) {
+      processTTSQueue(sessionId);
+    }
+  }
+  
+  return;
+}
+    
+  
+if (primarySource === "WEB") {
+  console.log('\n🌐 ROUTE: WEB (Web Search)');
+  console.log('   Action: Searching the web...');
+  
+  // Send "searching web" status to frontend
+  await pusher.trigger(channel, 'bot-searching', {
+    type: 'web',
+    message: 'Searching the web for latest information, please wait...',
+    urgency: decision.urgency
+  });
+  console.log('   ✅ Sent "searching web" status to frontend');
+  
+  // ✅ SPEAK: "Please give me some time..."
+  const searchingMessage = "Please give me some time, I'm searching the web for the latest information.";
+  
+  console.log(`   🔊 Speaking: "${searchingMessage}"`);
+  
+  // Add to conversation history
+  addToHistory(sessionId, 'AI Assistant', searchingMessage);
+  
+  // Send to frontend via Pusher
+  await pusher.trigger(channel, 'ai-response', {
+    text: searchingMessage
+  });
+  
+  // Add to TTS queue and wait for it to finish
+  if (!ttsQueue.has(sessionId)) {
+    ttsQueue.set(sessionId, { queue: [], isProcessing: false });
+  }
+  
+  const queueData = ttsQueue.get(sessionId);
+  queueData.queue.push({ text: searchingMessage, t0: t0 });
+  
+  if (!queueData.isProcessing) {
+    processTTSQueue(sessionId);
+  }
+  
+  // Wait for the message to be spoken (give it time)
+  await new Promise(resolve => setTimeout(resolve, 3000));
+  
+  console.log('   ✅ Searching message spoken');
+  
+  // TODO: Implement actual web search here
+  console.log('   ⚠️  WEB search not implemented yet');
+  
+  const placeholderResponse = "I don't have web search access yet, but this feature is coming soon!";
+  
+  await pusher.trigger(channel, 'ai-response', {
+    text: placeholderResponse
+  });
+  
+  addToHistory(sessionId, 'AI Assistant', placeholderResponse);
+  
+  queueData.queue.push({ text: placeholderResponse, t0: t0 });
+  
+  if (!queueData.isProcessing) {
+    processTTSQueue(sessionId);
+  }
+  
+  console.log('\n' + '='.repeat(80) + '\n');
+  
+  return;
+}
     
     console.log('\n⚠️  UNKNOWN ROUTE:', primarySource);
     
@@ -2835,11 +2981,21 @@ app.use((req, res) => {
 
 const startServer = async () => {
   const PORT = process.env.PORT || 3000;
- server.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`🌐 HTTP: http://localhost:${PORT}`);
-  console.log(`🔌 WebSocket: ws://localhost:${PORT}`);
-});
+  
+  server.listen(PORT, async () => {
+    console.log(`🚀 Server running on port ${PORT}`);
+    console.log(`🌐 HTTP: http://localhost:${PORT}`);
+    console.log(`🔌 WebSocket: ws://localhost:${PORT}`);
+    
+    // ✅ ADD THIS: Initialize documents on startup
+    console.log('\n🔄 Initializing knowledge base...');
+    try {
+      await initializeDocuments();
+    } catch (error) {
+      console.error('❌ Error initializing documents:', error.message);
+      console.log('⚠️  Server will continue without knowledge base');
+    }
+  });
 };
 
 if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
