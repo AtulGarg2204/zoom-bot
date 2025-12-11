@@ -9,6 +9,8 @@ const Groq = require('groq-sdk');
 const { google } = require('googleapis');
 const { initializeDocuments, searchRelevantChunks, getDocumentStats } = require('./ragService');
 const app = express();
+// At the top with other imports
+const mongoService = require('./mongoService');
 const server = http.createServer(app); // ← ADD THIS
 const wss = new WebSocket.Server({ server });
 const wsConnections = new Map(); // sessionId -> WebSocket connection
@@ -2978,7 +2980,7 @@ app.use((error, req, res, next) => {
 app.use((req, res) => {
   res.status(404).json({ error: 'Not found' });
 });
-
+// Find the startServer function and add cleanup
 const startServer = async () => {
   const PORT = process.env.PORT || 3000;
   
@@ -2987,7 +2989,7 @@ const startServer = async () => {
     console.log(`🌐 HTTP: http://localhost:${PORT}`);
     console.log(`🔌 WebSocket: ws://localhost:${PORT}`);
     
-    // ✅ ADD THIS: Initialize documents on startup
+    // Initialize documents on startup
     console.log('\n🔄 Initializing knowledge base...');
     try {
       await initializeDocuments();
@@ -2996,7 +2998,27 @@ const startServer = async () => {
       console.log('⚠️  Server will continue without knowledge base');
     }
   });
+  
+  // ✅ ADD THIS - Graceful shutdown
+  process.on('SIGINT', async () => {
+    console.log('\n\n🛑 Shutting down gracefully...');
+    await mongoService.closeMongoDB();
+    server.close(() => {
+      console.log('✅ Server closed');
+      process.exit(0);
+    });
+  });
+  
+  process.on('SIGTERM', async () => {
+    console.log('\n\n🛑 Shutting down gracefully...');
+    await mongoService.closeMongoDB();
+    server.close(() => {
+      console.log('✅ Server closed');
+      process.exit(0);
+    });
+  });
 };
+
 
 if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
   startServer();

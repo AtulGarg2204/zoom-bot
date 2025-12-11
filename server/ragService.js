@@ -40,30 +40,55 @@ const fs = require('fs');
 const path = require('path');
 const { PDFParse } = require('pdf-parse');
 const OpenAI = require('openai');
+const mongoService = require('./mongoService');
 
 // Initialize OpenAI
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
 
-// In-memory storage (no database for testing)
-let documentChunks = [];
-
 // ============================================================================
-// MAIN FUNCTIONS
+// INITIALIZATION
 // ============================================================================
 
 /**
- * Load and process all PDFs from documents folder on startup
+ * Initialize documents - SMART LOADING FROM MONGODB
  */
 async function initializeDocuments() {
   try {
     console.log('\n📚 INITIALIZING DOCUMENT PROCESSING');
     console.log('='.repeat(80));
     
+    // STEP 1: Connect to MongoDB
+    const connected = await mongoService.connectMongoDB();
+    
+    if (!connected) {
+      console.error('❌ Failed to connect to MongoDB');
+      console.log('⚠️  Server will continue without knowledge base');
+      return;
+    }
+    
+    // STEP 2: Check if documents already exist in MongoDB
+    const documentsExist = await mongoService.checkIfDocumentsExist();
+    
+    if (documentsExist) {
+      console.log('✅ Documents already exist in MongoDB - SKIPPING PROCESSING');
+      const stats = await mongoService.getStats();
+      console.log(`   Total documents: ${stats.totalDocuments}`);
+      console.log(`   Total chunks: ${stats.totalChunks}`);
+      console.log('   📋 Document list:');
+      stats.documents.forEach(doc => {
+        console.log(`      - ${doc.name}: ${doc.chunks} chunks`);
+      });
+      console.log('='.repeat(80) + '\n');
+      return;
+    }
+    
+    console.log('📝 No documents in MongoDB - Processing PDFs...');
+    
+    // STEP 3: Process PDFs (only if not in MongoDB)
     const documentsDir = path.join(__dirname, 'documents');
     
-    // Check if documents folder exists
     if (!fs.existsSync(documentsDir)) {
       console.log('📁 Creating documents folder...');
       fs.mkdirSync(documentsDir, { recursive: true });
@@ -71,7 +96,6 @@ async function initializeDocuments() {
       return;
     }
     
-    // Get all PDF files
     const files = fs.readdirSync(documentsDir).filter(file => file.endsWith('.pdf'));
     
     if (files.length === 0) {
@@ -79,17 +103,43 @@ async function initializeDocuments() {
       return;
     }
     
-    console.log(`📄 Found ${files.length} PDF files`);
+    console.log(`📄 Found ${files.length} PDF files\n`);
+    
+    const allChunks = [];
     
     // Process each PDF
     for (const file of files) {
-      await processAndStorePDF(path.join(documentsDir, file), file);
+      try {
+        const chunks = await processAndStorePDF(path.join(documentsDir, file), file);
+        
+        // Check if chunks is valid array
+        if (Array.isArray(chunks) && chunks.length > 0) {
+          allChunks.push(...chunks);
+          console.log(`   ✅ Added ${chunks.length} chunks from ${file}\n`);
+        } else {
+          console.log(`   ⚠️  No valid chunks from ${file}\n`);
+        }
+        
+      } catch (fileError) {
+        console.error(`   ❌ Error processing ${file}:`, fileError.message);
+        // Continue with other files
+      }
     }
     
+    console.log(`\n📦 Total chunks collected: ${allChunks.length}`);
+    
+    // STEP 4: Store in MongoDB
+    if (allChunks.length > 0) {
+      await mongoService.storeChunks(allChunks);
+    } else {
+      console.log('⚠️  No chunks to store in MongoDB');
+    }
+    
+    const stats = await mongoService.getStats();
+    
     console.log('\n✅ DOCUMENT PROCESSING COMPLETE');
-    console.log(`   Total documents: ${new Set(documentChunks.map(c => c.documentName)).size}`);
-    console.log(`   Total chunks stored: ${documentChunks.length}`);
-    console.log(`   Embedding dimensions: ${documentChunks[0]?.embedding.length || 0}`);
+    console.log(`   Total documents: ${stats.totalDocuments}`);
+    console.log(`   Total chunks stored: ${stats.totalChunks}`);
     console.log('='.repeat(80) + '\n');
     
   } catch (error) {
@@ -98,8 +148,12 @@ async function initializeDocuments() {
   }
 }
 
+// ============================================================================
+// PDF PROCESSING
+// ============================================================================
+
 /**
- * Process a single PDF and store chunks with embeddings (PARALLEL EMBEDDING)
+ * Process a single PDF and return chunks with embeddings (PARALLEL EMBEDDING)
  */
 async function processAndStorePDF(filePath, fileName) {
   try {
@@ -128,7 +182,7 @@ async function processAndStorePDF(filePath, fileName) {
     
     if (fullText.length === 0) {
       console.log('   ⚠️  Warning: No text extracted from PDF');
-      return;
+      return [];
     }
     
     // Split into chunks
@@ -138,10 +192,6 @@ async function processAndStorePDF(filePath, fileName) {
     console.log('   🚀 Generating embeddings in parallel (batch size: 10)...');
     
     const startTime = Date.now();
-    
-    // ============================================================
-    // PARALLEL EMBEDDING GENERATION (BATCH SIZE: 10)
-    // ============================================================
     
     const BATCH_SIZE = 10;
     const validChunks = chunks.filter(chunk => chunk.trim().length >= 50);
@@ -157,13 +207,11 @@ async function processAndStorePDF(filePath, fileName) {
       
       console.log(`   🔄 Processing batch ${batchNumber}/${totalBatches} (${batch.length} chunks)...`);
       
-      // Generate embeddings for all chunks in this batch IN PARALLEL
       const embeddingPromises = batch.map(chunkText => generateEmbedding(chunkText));
       
       try {
         const embeddings = await Promise.all(embeddingPromises);
         
-        // Store chunks with their embeddings
         batch.forEach((chunkText, idx) => {
           const globalIndex = i + idx;
           
@@ -186,8 +234,6 @@ async function processAndStorePDF(filePath, fileName) {
         
       } catch (error) {
         console.error(`      ❌ Error in batch ${batchNumber}:`, error.message);
-        
-        // Fallback: Process this batch sequentially if parallel fails
         console.log(`      🔄 Retrying batch ${batchNumber} sequentially...`);
         
         for (let j = 0; j < batch.length; j++) {
@@ -215,26 +261,25 @@ async function processAndStorePDF(filePath, fileName) {
         }
       }
       
-      // Small delay between batches to avoid rate limits
       if (i + BATCH_SIZE < validChunks.length) {
         await new Promise(resolve => setTimeout(resolve, 200));
       }
     }
     
-    // Add all chunks to global storage
-    documentChunks.push(...allChunksWithEmbeddings);
-    
     const endTime = Date.now();
     const totalTime = ((endTime - startTime) / 1000).toFixed(2);
     
     console.log(`   ✅ Successfully processed ${fileName}`);
-    console.log(`   📦 Stored ${allChunksWithEmbeddings.length} chunks`);
+    console.log(`   📦 Created ${allChunksWithEmbeddings.length} chunks with embeddings`);
     console.log(`   ⏱️  Total time: ${totalTime}s`);
     console.log(`   ⚡ Speed: ${(allChunksWithEmbeddings.length / totalTime).toFixed(1)} chunks/second`);
+    
+    return allChunksWithEmbeddings;
     
   } catch (error) {
     console.error(`   ❌ Error processing ${fileName}:`, error.message);
     console.error('   Stack trace:', error.stack);
+    return [];
   }
 }
 
@@ -242,9 +287,6 @@ async function processAndStorePDF(filePath, fileName) {
 // HELPER FUNCTIONS
 // ============================================================================
 
-/**
- * Split text into chunks with overlap
- */
 function splitIntoChunks(text, chunkSize = 1000, overlap = 200) {
   const chunks = [];
   let start = 0;
@@ -259,9 +301,6 @@ function splitIntoChunks(text, chunkSize = 1000, overlap = 200) {
   return chunks;
 }
 
-/**
- * Generate embedding using OpenAI
- */
 async function generateEmbedding(text) {
   try {
     const response = await openai.embeddings.create({
@@ -278,9 +317,6 @@ async function generateEmbedding(text) {
   }
 }
 
-/**
- * Calculate cosine similarity between two vectors
- */
 function cosineSimilarity(vecA, vecB) {
   if (vecA.length !== vecB.length) {
     throw new Error('Vectors must have same length');
@@ -307,42 +343,38 @@ function cosineSimilarity(vecA, vecB) {
 // SEARCH FUNCTIONS
 // ============================================================================
 
-/**
- * Search for relevant chunks given a question
- */
 async function searchRelevantChunks(question, topK = 3) {
   try {
     console.log('\n🔍 RAG SEARCH');
     console.log('='.repeat(80));
     console.log(`   Question: "${question}"`);
     
+    const documentChunks = await mongoService.getAllChunks();
+    
     if (documentChunks.length === 0) {
-      console.log('   ⚠️  No documents loaded');
+      console.log('   ⚠️  No documents loaded in MongoDB');
       return [];
     }
     
-    // Generate embedding for question
+    console.log(`   📊 Found ${documentChunks.length} chunks in database`);
+    
     console.log('   🔄 Generating question embedding...');
     const questionEmbedding = await generateEmbedding(question);
     
-    // Calculate similarity with all chunks
     console.log('   🔄 Calculating similarities...');
     const results = documentChunks.map(chunk => ({
       ...chunk,
       similarity: cosineSimilarity(questionEmbedding, chunk.embedding)
     }));
     
-    // Sort by similarity (highest first)
     results.sort((a, b) => b.similarity - a.similarity);
     
-    // Get top K results
     const topResults = results.slice(0, topK);
     
     console.log(`\n   📊 Top ${topK} Results:`);
     topResults.forEach((result, idx) => {
-      console.log(`   ${idx + 1}. ${result.documentName} (Chunk ${result.chunkIndex + 1})`);
-      console.log(`      Similarity: ${result.similarity.toFixed(4)}`);
-      console.log(`      Preview: "${result.text.substring(0, 100)}..."`);
+      console.log(`   ${idx + 1}. ${result.documentName} (Chunk ${result.chunkIndex + 1}) - Similarity: ${result.similarity.toFixed(4)}`);
+      console.log(`      Preview: ${result.text.substring(0, 100)}...`);
     });
     console.log('='.repeat(80) + '\n');
     
@@ -350,38 +382,12 @@ async function searchRelevantChunks(question, topK = 3) {
     
   } catch (error) {
     console.error('❌ RAG search error:', error.message);
-    console.error('Stack trace:', error.stack);
     return [];
   }
 }
 
-/**
- * Get document statistics
- */
-function getDocumentStats() {
-  const uniqueDocs = new Set(documentChunks.map(c => c.documentName));
-  
-  const stats = {
-    totalDocuments: uniqueDocs.size,
-    totalChunks: documentChunks.length,
-    documents: []
-  };
-  
-  // Group chunks by document
-  const docGroups = {};
-  documentChunks.forEach(chunk => {
-    if (!docGroups[chunk.documentName]) {
-      docGroups[chunk.documentName] = 0;
-    }
-    docGroups[chunk.documentName]++;
-  });
-  
-  // Build document list
-  for (const [name, count] of Object.entries(docGroups)) {
-    stats.documents.push({ name, chunks: count });
-  }
-  
-  return stats;
+async function getDocumentStats() {
+  return await mongoService.getStats();
 }
 
 // ============================================================================
