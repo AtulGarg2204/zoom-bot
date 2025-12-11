@@ -12,7 +12,7 @@ const app = express();
 const server = http.createServer(app); // ← ADD THIS
 const wss = new WebSocket.Server({ server });
 const wsConnections = new Map(); // sessionId -> WebSocket connection
-
+const { enhanceQuery, shouldEnhanceQuery } = require('./contextEnhancer');
 console.log('🔌 WebSocket server initialized');
 
 const pusher = new Pusher({
@@ -399,13 +399,7 @@ const routerResponse = await groq.chat.completions.create({
       
       return;
     }
-    
-    // ============================================================
-    // ROUTE: KB
-    // ============================================================
-    
-    // ============================================================
-// ============================================================
+ // ============================================================
 // ROUTE: KB (Search documents)
 // ============================================================
 
@@ -421,20 +415,17 @@ if (primarySource === "KB") {
   });
   console.log('   ✅ Sent "searching documents" status to frontend');
   
-  // ✅ SPEAK: "Please give me some time..."
+  // SPEAK: "Please give me some time..."
   const searchingMessage = "Please give me some time, I'm going through the documents.";
   
   console.log(`   🔊 Speaking: "${searchingMessage}"`);
   
-  // Add to conversation history
   addToHistory(sessionId, 'AI Assistant', searchingMessage);
   
-  // Send to frontend via Pusher
   await pusher.trigger(channel, 'ai-response', {
     text: searchingMessage
   });
   
-  // Add to TTS queue and wait for it to finish
   if (!ttsQueue.has(sessionId)) {
     ttsQueue.set(sessionId, { queue: [], isProcessing: false });
   }
@@ -446,15 +437,25 @@ if (primarySource === "KB") {
     processTTSQueue(sessionId);
   }
   
-  // Wait for the message to be spoken (give it time)
   await new Promise(resolve => setTimeout(resolve, 3000));
   
   console.log('   ✅ Searching message spoken');
   
-  // NOW DO THE ACTUAL SEARCH
+  // ✅ NEW: CONTEXT ENHANCEMENT
+  let searchQuery = lastUserMessage;
+  
+  // Check if we should enhance the query
+  if (shouldEnhanceQuery(lastUserMessage, conversationContext)) {
+    console.log('   🔄 Query needs context enhancement');
+    searchQuery = await enhanceQuery(lastUserMessage, conversationContext);
+  } else {
+    console.log('   ℹ️  Query is clear - no enhancement needed');
+  }
+  
+  // NOW DO THE ACTUAL SEARCH WITH ENHANCED QUERY
   try {
-    // Search for relevant chunks
-    const relevantChunks = await searchRelevantChunks(lastUserMessage, 3);
+    // Search for relevant chunks using ENHANCED query
+    const relevantChunks = await searchRelevantChunks(searchQuery, 3);
     
     if (relevantChunks.length === 0) {
       console.log('   ⚠️  No relevant chunks found');
@@ -510,7 +511,7 @@ INSTRUCTIONS:
         },
         {
           role: 'user',
-          content: lastUserMessage
+          content: searchQuery
         }
       ],
       temperature: 0.5,
@@ -559,8 +560,7 @@ INSTRUCTIONS:
   }
   
   return;
-}
-    
+} 
   
 if (primarySource === "WEB") {
   console.log('\n🌐 ROUTE: WEB (Web Search)');
